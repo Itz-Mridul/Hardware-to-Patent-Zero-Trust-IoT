@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect("/home/mridul/Hardware-to-Patent-Zero-Trust-IoT/iot_data.db")
     try:
         conn.execute(
             """
