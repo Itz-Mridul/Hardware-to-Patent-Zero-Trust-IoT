@@ -73,6 +73,9 @@ DB_PATH = os.path.join(BASE_DIR, "security.db")
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_STATUS_TOPIC = os.environ.get("MQTT_STATUS_TOPIC", "mailbox/status")
+MQTT_HEARTBEAT_TOPIC = os.environ.get("MQTT_HEARTBEAT_TOPIC", "mailbox/heartbeat")
+MQTT_ENVIRONMENT_TOPIC = os.environ.get("MQTT_ENVIRONMENT_TOPIC", "mailbox/environment")
+MQTT_PHOTO_PREFIX = os.environ.get("MQTT_PHOTO_PREFIX", "mailbox/photo/")
 MQTT_RETRY_DELAY_SECONDS = int(os.environ.get("MQTT_RETRY_DELAY_SECONDS", "5"))
 
 GRACE_PERIOD_SECONDS = int(os.environ.get("GRACE_PERIOD_SECONDS", "10"))
@@ -581,6 +584,18 @@ def persist_heartbeat_result(
 
         conn.commit()
 
+    try:
+        from pi_backend.forensic_logger import log_access_attempt
+        log_access_attempt(
+            device_id=device_id,
+            result=status,
+            reason=message,
+            trust_score=trust_score,
+            db_path=DB_PATH,
+        )
+    except Exception as exc:  # pragma: no cover - logging must not block auth
+        print(f"[VERIFY] Forensic log skipped: {exc}")
+
     print(
         f"[VERIFY] {status} | {device_id} | IPD: {inter_packet_delay}ms | "
         f"RSSI: {rssi}dBm | Trust: {trust_score:.1f}"
@@ -659,19 +674,102 @@ def handle_status_message(topic, payload, retained=False):
     )
 
 
+def handle_heartbeat_message(topic, payload):
+    """Score an MQTT heartbeat payload through the same engine as /verify."""
+    data = parse_json_or_text(payload)
+    if not data.get("device_id"):
+        print(f"[HEARTBEAT] Ignored {topic}: missing device_id")
+        return None, 400
+
+    with app.app_context():
+        response, http_code, _ = evaluate_heartbeat(data)
+
+    body = response.get_json()
+    print(
+        f"[HEARTBEAT] MQTT scored {data.get('device_id')} -> "
+        f"{body.get('status')} ({http_code})"
+    )
+    return body, http_code
+
+
+def handle_environment_message(topic, payload):
+    """Persist MQTT environment readings for dashboard consumption."""
+    data = parse_json_or_text(payload)
+    device_id = data.get("device_id") or "PI_DHT22"
+    temperature = data.get("temperature")
+    humidity = data.get("humidity")
+
+    if temperature is None and humidity is None:
+        print(f"[ENV] Ignored {topic}: missing temperature/humidity")
+        return
+
+    now = time.time()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO heartbeats (
+                device_id, timestamp, temperature, humidity, rssi, free_heap,
+                inter_packet_delay, packet_size, received_at, is_legitimate
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                device_id,
+                int(now),
+                temperature,
+                humidity,
+                data.get("rssi"),
+                data.get("free_heap"),
+                data.get("inter_packet_delay"),
+                data.get("packet_size"),
+                now,
+                1,
+            ),
+        )
+        conn.commit()
+
+    print(f"[ENV] Stored reading from {device_id}: T={temperature} H={humidity}")
+
+
+def handle_photo_message(topic, payload):
+    """Persist the latest ESP32-CAM JPEG from mailbox/photo/<device_id>."""
+    if not topic.startswith(MQTT_PHOTO_PREFIX):
+        return
+
+    device_id = topic[len(MQTT_PHOTO_PREFIX):] or "unknown"
+    try:
+        from pi_backend.photo_store import store_device_photo
+        path = store_device_photo(device_id, bytes(payload))
+        print(f"[PHOTO] Stored latest image for {device_id}: {path}")
+    except Exception as exc:
+        print(f"[PHOTO] Store failed for {device_id}: {exc}")
+
+
 def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
-        print(f"Connected to MQTT broker. Subscribing to {MQTT_STATUS_TOPIC}")
-        client.subscribe(MQTT_STATUS_TOPIC, qos=1)
+        subscriptions = (
+            (MQTT_STATUS_TOPIC, 1),
+            (MQTT_HEARTBEAT_TOPIC, 1),
+            (MQTT_ENVIRONMENT_TOPIC, 0),
+            (f"{MQTT_PHOTO_PREFIX}+", 0),
+        )
+        print("Connected to MQTT broker. Subscribing to telemetry topics.")
+        for topic, qos in subscriptions:
+            client.subscribe(topic, qos=qos)
+            print(f"  subscribed: {topic}")
     else:
         print(f"Failed to connect to MQTT broker. Code: {reason_code}")
 
 
 def on_mqtt_message(client, userdata, msg):
-    if msg.topic != MQTT_STATUS_TOPIC:
-        return
-
-    handle_status_message(msg.topic, msg.payload, retained=getattr(msg, "retain", False))
+    if msg.topic == MQTT_STATUS_TOPIC:
+        handle_status_message(msg.topic, msg.payload, retained=getattr(msg, "retain", False))
+    elif msg.topic == MQTT_HEARTBEAT_TOPIC:
+        handle_heartbeat_message(msg.topic, msg.payload)
+    elif msg.topic == MQTT_ENVIRONMENT_TOPIC:
+        handle_environment_message(msg.topic, msg.payload)
+    elif msg.topic.startswith(MQTT_PHOTO_PREFIX):
+        handle_photo_message(msg.topic, msg.payload)
 
 
 def mqtt_status_listener():

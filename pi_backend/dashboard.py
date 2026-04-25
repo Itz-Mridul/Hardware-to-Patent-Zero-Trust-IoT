@@ -27,6 +27,8 @@ except ImportError:
     raise SystemExit("Flask is required: pip install flask")
 
 from pi_backend.forensic_logger import get_recent_access_log
+from pi_backend.photo_store import load_device_photo
+from pi_backend.photo_store import store_device_photo as persist_device_photo
 from pi_backend.thermal_monitor import get_thermal_alerts
 
 # Photo storage: latest JPEG per device (populated by MQTT photo handler)
@@ -35,6 +37,7 @@ _latest_photos: dict = {}   # {device_id: bytes}
 def store_device_photo(device_id: str, jpeg_bytes: bytes) -> None:
     """Called by the MQTT handler when a photo payload arrives."""
     _latest_photos[device_id] = jpeg_bytes
+    persist_device_photo(device_id, jpeg_bytes)
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("IOT_DB_PATH", os.path.join(_BASE_DIR, "security.db"))
@@ -674,6 +677,8 @@ def api_photo(device_id: str):
     The dashboard <img> tag polls this endpoint every 5 seconds.
     """
     jpeg = _latest_photos.get(device_id)
+    if jpeg is None:
+        jpeg = load_device_photo(device_id)
     if jpeg:
         return Response(jpeg, mimetype="image/jpeg")
 

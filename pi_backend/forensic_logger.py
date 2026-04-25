@@ -24,9 +24,9 @@ DB_PATH = os.environ.get("IOT_DB_PATH", os.path.join(_BASE_DIR, "security.db"))
 ENABLE_BLOCKCHAIN = os.environ.get("ENABLE_BLOCKCHAIN", "false").lower() == "true"
 
 
-def _ensure_access_log_table() -> None:
+def _ensure_access_log_table(db_path: Optional[str] = None) -> None:
     """Create the access_log table if it doesn't exist yet."""
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(db_path or DB_PATH) as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS access_log (
@@ -56,6 +56,7 @@ def log_access_attempt(
     reason: str,
     trust_score: float,
     submit_to_chain: bool = False,
+    db_path: Optional[str] = None,
 ) -> str:
     """
     Persists an access attempt record to the local SQLite cache.
@@ -70,7 +71,8 @@ def log_access_attempt(
     Returns:
         The event hash (SHA-256 hex string) for reference.
     """
-    _ensure_access_log_table()
+    target_db = db_path or DB_PATH
+    _ensure_access_log_table(target_db)
 
     timestamp = int(time.time())
     event_hash = _hash_event(device_id, result, reason, timestamp)
@@ -80,7 +82,7 @@ def log_access_attempt(
     if submit_to_chain and ENABLE_BLOCKCHAIN:
         on_chain_tx = _submit_to_blockchain(device_id, event_hash, trust_score)
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(target_db) as conn:
         conn.execute(
             """
             INSERT INTO access_log
