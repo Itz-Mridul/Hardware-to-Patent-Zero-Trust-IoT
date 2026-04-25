@@ -6,13 +6,15 @@
 
 // ==========================================
 // 1. CONFIGURATION
+// ⚠️  Fill these in LOCALLY before flashing.
+//    NEVER commit real credentials to git.
 // ==========================================
-const char* WIFI_SSID = "Room203";
-const char* WIFI_PASSWORD = "Hostel@203"; // Restored actual password
-const char* MQTT_SERVER = "192.168.1.113";  // Raspberry Pi IP 
-const int MQTT_PORT = 1883;
-const char* HTTP_SERVER_URL = "http://192.168.1.113:5005/verify";
-const char* DEVICE_ID = "ESP32_GATEWAY_001";
+const char* WIFI_SSID     = "YOUR_WIFI_SSID";       // e.g. "MyHomeNetwork"
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";   // e.g. "MyPassword123"
+const char* MQTT_SERVER   = "YOUR_PI_IP";           // e.g. "192.168.1.109"
+const int   MQTT_PORT     = 1883;
+const char* HTTP_SERVER_URL = "http://YOUR_PI_IP:5005/verify";  // e.g. http://192.168.1.109:5005/verify
+const char* DEVICE_ID     = "ESP32_GATEWAY_001";
 
 const unsigned long HEARTBEAT_INTERVAL_MS = 5000;
 const unsigned long DASHBOARD_INTERVAL_MS = 1000; // 1 Hz is fast enough for a live dashboard
