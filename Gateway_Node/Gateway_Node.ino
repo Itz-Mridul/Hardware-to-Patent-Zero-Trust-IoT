@@ -13,7 +13,7 @@ const int MQTT_PORT = 1883;
 const char* DEVICE_ID = "ESP32_GATEWAY_001";
 
 const unsigned long HEARTBEAT_INTERVAL_MS = 5000;
-const unsigned long DASHBOARD_INTERVAL_MS = 100; 
+const unsigned long DASHBOARD_INTERVAL_MS = 1000; // 1 Hz is fast enough for a live dashboard 
 const unsigned long DHT_READ_INTERVAL_MS = 2000; 
 const unsigned long VIB_HOLD_MS = 400;           
 const unsigned long TAMPER_DEBOUNCE_MS = 1000;   
@@ -208,7 +208,9 @@ void setup() {
   Serial.println("=========================================================================================\n");
 
   dht.begin();
-  pinMode(VIB_PIN, INPUT);
+  // INPUT_PULLUP keeps the line HIGH when the sensor is idle, preventing
+  // floating-pin noise from triggering spurious RISING-edge interrupts.
+  pinMode(VIB_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(VIB_PIN), vibrationISR, RISING);
 
   updateDhtCache(true);

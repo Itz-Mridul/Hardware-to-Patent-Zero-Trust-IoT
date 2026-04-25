@@ -5,6 +5,10 @@
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include <ArduinoJson.h>  // safe JSON serialisation — eliminates string-concat injection
+#include <FS.h>
+#include <SD_MMC.h>
+#include <mbedtls/md.h>
+
 
 // ==========================================
 // 1. CONFIGURATION
@@ -291,34 +295,85 @@ bool initCamera() {
   return true;
 }
 
+String calculateSHA256(uint8_t* data, size_t len) {
+    byte hash[32];
+    mbedtls_md_context_t ctx;
+    mbedtls_md_type_t md_type = MBEDTLS_MD_SHA256;
+    
+    mbedtls_md_init(&ctx);
+    mbedtls_md_setup(&ctx, mbedtls_md_info_from_type(md_type), 0);
+    mbedtls_md_starts(&ctx);
+    mbedtls_md_update(&ctx, data, len);
+    mbedtls_md_finish(&ctx, hash);
+    mbedtls_md_free(&ctx);
+    
+    String hashString = "";
+    for (int i = 0; i < 32; i++) {
+        char str[3];
+        sprintf(str, "%02x", hash[i]);
+        hashString += str;
+    }
+    
+    return hashString;
+}
+
 void captureEvidence() {
-  Serial.println("Evidence capture triggered.");
+  Serial.println("📸 ═══════════════════════════════════════");
+  Serial.println("   EVIDENCE CAPTURE SEQUENCE INITIATED");
+  Serial.println("═══════════════════════════════════════\n");
 
   digitalWrite(FLASH_LED_PIN, HIGH);
-  delay(FLASH_ON_MS);
+  delay(100);
 
-  camera_fb_t* fb = esp_camera_fb_get();
-  digitalWrite(FLASH_LED_PIN, LOW);
+  for (int i = 1; i <= 10; i++) {
+    unsigned long captureTime = millis();
+    camera_fb_t* fb = esp_camera_fb_get();
 
-  captureCount++;
-  lastCaptureMs = millis();
+    if (!fb) {
+      Serial.printf("❌ Photo %d/%d: Capture failed\n", i, 10);
+      lastCaptureOk = false;
+      continue;
+    }
 
-  if (!fb) {
-    lastCaptureOk = false;
-    lastImageSize = 0;
-    Serial.println("Camera capture failed.");
-    publishStatus("capture_failed");
-    return;
+    lastCaptureOk = true;
+    lastImageSize = fb->len;
+    captureCount++;
+    lastCaptureMs = captureTime;
+
+    String hash = calculateSHA256(fb->buf, fb->len);
+    String filename = "/evidence_" + String(captureTime) + ".jpg";
+    
+    File file = SD_MMC.open(filename, FILE_WRITE);
+    if (file) {
+      file.write(fb->buf, fb->len);
+      file.close();
+      
+      Serial.printf("✅ Photo %d/%d captured\n", i, 10);
+      Serial.printf("   File: %s\n", filename.c_str());
+      Serial.printf("   Size: %d bytes\n", fb->len);
+      Serial.printf("   Hash: %s\n\n", hash.c_str());
+      
+      StaticJsonDocument<600> doc;
+      doc["device_id"] = DEVICE_ID;
+      doc["filename"] = filename;
+      doc["image_hash"] = hash;
+      doc["timestamp"] = captureTime;
+      doc["size"] = fb->len;
+      doc["sequence"] = i;
+      
+      char buffer[600];
+      serializeJson(doc, buffer);
+      mqtt.publish("sentry/evidence", buffer);
+    } else {
+      Serial.printf("❌ Photo %d/%d: SD write failed\n", i, 10);
+    }
+
+    esp_camera_fb_return(fb);
+    delay(500);
   }
 
-  lastCaptureOk = true;
-  lastImageSize = fb->len;
-
-  Serial.print("Evidence captured. Image bytes=");
-  Serial.println(lastImageSize);
-
-  esp_camera_fb_return(fb);
-  publishStatus("evidence_captured");
+  digitalWrite(FLASH_LED_PIN, LOW);
+  publishStatus("evidence_sequence_complete");
 }
 
 // ==========================================
@@ -367,6 +422,13 @@ void setup() {
     Serial.println("Camera unavailable. Restarting in 5 seconds.");
     delay(5000);
     ESP.restart();
+  }
+
+  // Initialize SD card
+  if (!SD_MMC.begin("/sdcard", true)) {
+    Serial.println("❌ SD Card mount failed! Continuing without SD card...");
+  } else {
+    Serial.println("✅ SD Card mounted");
   }
 
   connectWiFi();

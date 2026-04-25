@@ -1,2 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Databases (runtime data, not source)
+*.db
+!tests/attack_data.db
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# TLS Certificates (generated — do not commit private keys to git)
+certs/*.key
+certs/*.csr
+certs/*.srl
+# DO commit: certs/*.crt and certs/README.md (public certs are safe)
+
+# Environment / secrets
+.env
+*.env
+
+# Model binary (trained on device — not portable)
+pi_backend/fingerprint_model.pkl
+
+# Original data
 edge_ml_gateway/iot_data.db
 iot_data.db

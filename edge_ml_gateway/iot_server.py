@@ -1,16 +1,19 @@
+import os
 import sqlite3
 import time
 
 from flask import Flask, jsonify, request
 
 
-DB_NAME = "iot_data.db"
+# Resolve DB path once at startup: prefer the env var, fall back to a local file.
+_DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iot_data.db")
+DB_PATH = os.environ.get("IOT_DB_PATH", _DEFAULT_DB)
+
 app = Flask(__name__)
 
 
 def init_db():
-    conn = sqlite3.connect("/home/mridul/Hardware-to-Patent-Zero-Trust-IoT/iot_data.db")
-    try:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS heartbeats (
@@ -22,8 +25,6 @@ def init_db():
             """
         )
         conn.commit()
-    finally:
-        conn.close()
 
 
 @app.post("/verify")
@@ -42,19 +43,17 @@ def verify():
 
     timestamp = time.time()
 
-    conn = sqlite3.connect(DB_NAME)
-    try:
+    with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO heartbeats (device_id, rssi, timestamp) VALUES (?, ?, ?)",
             (device_id, rssi, timestamp),
         )
         conn.commit()
-    finally:
-        conn.close()
 
     return jsonify({"success": True, "message": "Heartbeat recorded."})
 
 
 if __name__ == "__main__":
     init_db()
+    print(f"[*] IoT server using database: {DB_PATH}")
     app.run(host="0.0.0.0", port=5005)
