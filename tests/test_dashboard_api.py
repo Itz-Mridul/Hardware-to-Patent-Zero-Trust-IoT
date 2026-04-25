@@ -12,12 +12,14 @@ def temp_db(monkeypatch, tmp_path):
 
     import pi_backend.defense_sensors as ds
     import pi_backend.forensic_logger as fl
+    import pi_backend.photo_store as ps
     import pi_backend.thermal_monitor as tm
 
     monkeypatch.setattr(iot_server, "DB_PATH", db_path)
     monkeypatch.setattr(dashboard, "DB_PATH", db_path)
     monkeypatch.setattr(ds, "DB_PATH", db_path)
     monkeypatch.setattr(fl, "DB_PATH", db_path)
+    monkeypatch.setattr(ps, "PHOTO_DIR", tmp_path / "photos")
     monkeypatch.setattr(tm, "DB_PATH", db_path)
 
     iot_server.init_db()
@@ -59,3 +61,19 @@ def test_environment_endpoint_returns_latest_dht22_reading(temp_db):
     assert payload["device_id"] == "PI_DHT22"
     assert payload["temperature"] == 29.25
     assert payload["humidity"] == 58.5
+
+
+def test_photo_endpoint_reads_persisted_photo_when_memory_is_empty(temp_db):
+    from pi_backend.photo_store import store_device_photo
+
+    device_id = "ESP32_CAM_01"
+    jpeg = b"\xff\xd8fake-jpeg\xff\xd9"
+    store_device_photo(device_id, jpeg)
+    dashboard._latest_photos.clear()
+
+    client = dashboard.app.test_client()
+    response = client.get(f"/api/photo/{device_id}")
+
+    assert response.status_code == 200
+    assert response.mimetype == "image/jpeg"
+    assert response.data == jpeg

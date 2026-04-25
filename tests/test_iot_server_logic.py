@@ -102,3 +102,47 @@ def test_status_message_sets_grace_period(monkeypatch):
         assert state["grace_period_until"] > time.time()
     finally:
         temp_dir.cleanup()
+
+
+def test_mqtt_heartbeat_is_scored_and_logged(monkeypatch):
+    temp_dir = _use_temp_db(monkeypatch)
+    device_id = "ESP32_SOFTWARE_ATTACKER"
+
+    try:
+        iot_server.save_device_status(
+            device_id,
+            status="ONLINE",
+            last_seen=time.time(),
+            grace_period_until=0.0,
+            trust_score=60.0,
+            last_rssi=-45,
+            last_ipd=5000,
+            last_transition=time.time(),
+            status_source="test",
+            connection_state="ONLINE",
+            last_event="test_setup",
+        )
+
+        body, http_code = iot_server.handle_heartbeat_message(
+            "mailbox/heartbeat",
+            {
+                "device_id": device_id,
+                "inter_packet_delay": 20,
+                "rssi": -45,
+                "timestamp": int(time.time() * 1000),
+            },
+        )
+
+        assert http_code == 403
+        assert body["status"] == "REJECTED"
+
+        with sqlite3.connect(iot_server.DB_PATH) as conn:
+            row = conn.execute(
+                "SELECT result FROM access_log WHERE device_id = ?",
+                (device_id,),
+            ).fetchone()
+
+        assert row is not None
+        assert row[0] == "REJECTED"
+    finally:
+        temp_dir.cleanup()

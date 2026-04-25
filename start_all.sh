@@ -19,6 +19,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV="$SCRIPT_DIR/.venv/bin/activate"
 LOG_DIR="$SCRIPT_DIR/logs"
+DASHBOARD_PORT="${DASHBOARD_PORT:-5001}"
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -49,7 +50,7 @@ echo ""
 echo -e "${CYAN}[BOOT] Running hardware attestation...${NC}"
 python3 -c "
 import sys
-sys.path.insert(0, '.')
+sys.path.insert(0, '$SCRIPT_DIR')
 from pi_backend.hardware_attestation import HardwareAttestor
 a = HardwareAttestor()
 r = a.verify()
@@ -109,7 +110,7 @@ SENSOR_PID=$!
 
 echo -e "${CYAN}[3/4] Starting Security Dashboard (port 5001)...${NC}"
 nohup python3 -c "
-import sys; sys.path.insert(0,'.')
+import sys; sys.path.insert(0,'$SCRIPT_DIR')
 from pi_backend.dashboard import app
 import os
 app.run(host='0.0.0.0', port=int(os.environ.get('DASHBOARD_PORT','5001')), debug=False)
@@ -136,7 +137,7 @@ echo -e "  ${GREEN}${BOLD}All services running!${NC}"
 echo ""
 echo -e "  IoT + AI Engine  → ${BOLD}port 5005${NC}   (PID $IOT_PID)"
 echo -e "  Defense Sensors  → ${BOLD}background${NC} (PID $SENSOR_PID)"
-echo -e "  Dashboard        → ${BOLD}http://$(hostname -I | awk '{print $1}'):5001${NC}  (PID $DASH_PID)"
+echo -e "  Dashboard        → ${BOLD}http://$(hostname -I | awk '{print $1}'):$DASHBOARD_PORT${NC}  (PID $DASH_PID)"
 echo -e "  Telegram Alerts  → (PID $TG_PID)"
 echo ""
 echo "  Logs → $LOG_DIR/"
