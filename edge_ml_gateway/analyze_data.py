@@ -1,14 +1,19 @@
+import os
 import sqlite3
 from pathlib import Path
 
 import pandas as pd
 
 
-# 1. PATH DIAGNOSTICS
-PI_DB_PATH = Path(
-    "/home/mridul/Hardware-to-Patent-Zero-Trust-IoT/iot_data.db"
-)
-DB_PATH = PI_DB_PATH if PI_DB_PATH.exists() else Path(__file__).with_name("iot_data.db")
+# 1. PATH RESOLUTION
+# On the Pi, run: export ANALYZE_DB_PATH="/home/mridul/.../iot_data.db"
+# On Mac (or anywhere else), defaults to a sibling iot_data.db next to this script.
+_script_dir = Path(__file__).resolve().parent
+_env_path = os.environ.get("ANALYZE_DB_PATH")
+if _env_path:
+    DB_PATH = Path(_env_path)
+else:
+    DB_PATH = _script_dir / "iot_data.db"
 
 
 def table_exists(conn, table_name):
