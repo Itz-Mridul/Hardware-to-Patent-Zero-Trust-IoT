@@ -11,8 +11,8 @@ import sqlite3
 import random
 
 # ---------------- CONFIGURATION ----------------
-# Set PI_IP in your environment or .env file — do NOT hardcode real IPs here.
-PI_IP = os.environ.get("PI_LOCAL_IP", "192.168.X.X")
+# Updated to match the known Gateway IP
+PI_IP = "192.168.1.113"  
 
 # Dynamic DB path (saves in the same directory as this script)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
