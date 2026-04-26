@@ -68,3 +68,4 @@ ganache_db/
 # Node.js (Truffle/Hardhat)
 node_modules/
 build/
+tests/attack_data.db

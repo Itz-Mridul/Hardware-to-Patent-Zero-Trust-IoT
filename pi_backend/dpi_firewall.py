@@ -21,8 +21,9 @@ from blockchain_bridge import hash_event, send_to_blockchain
 # --- 1. CONFIGURATION ---
 
 INTERFACE = os.environ.get("GATEWAY_IFACE", "wlan0")
-GATEWAY_IP = os.environ.get("GATEWAY_IP", "192.168.1.113")
-COMMAND_CENTER_IP = os.environ.get("COMMAND_CENTER_IP", "192.168.1.113")
+# Set GATEWAY_IP and COMMAND_CENTER_IP in your .env — do NOT hardcode real IPs here.
+GATEWAY_IP = os.environ.get("GATEWAY_IP", "")
+COMMAND_CENTER_IP = os.environ.get("COMMAND_CENTER_IP", GATEWAY_IP)
 COMMAND_CENTER_PORT = 5000
 
 BANNED_DOMAINS = ["spacejam.com", "tiktok.com", "facebook.com"]
