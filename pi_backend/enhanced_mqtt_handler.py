@@ -11,7 +11,7 @@ from web3 import Web3
 #   export CONTRACT_ADDRESS="0x..."
 BLOCKCHAIN_URL = os.environ.get("BLOCKCHAIN_URL", "http://127.0.0.1:7545")
 
-CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "0x9D776C5513A171358F8D6241D3507B907D88B6B7")
+CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "")
 
 # Paste your contract ABI here.
 ABI_JSON = '''
@@ -116,6 +116,11 @@ w3 = Web3(Web3.HTTPProvider(BLOCKCHAIN_URL))
 
 
 def connect_to_blockchain():
+    if not CONTRACT_ADDRESS:
+        print("CONTRACT_ADDRESS not set — blockchain features disabled.")
+        print("Deploy the contract first and set CONTRACT_ADDRESS in .env")
+        return
+
     if not w3.is_connected():
         raise ConnectionError(
             "Connection failed. Make sure Ganache is running and the IP/port are correct."

@@ -42,9 +42,29 @@ certs/*.srl
 .env
 *.env
 
-# Model binary (trained on device — not portable)
+# Model binaries (trained on device — not portable)
 pi_backend/fingerprint_model.pkl
+*.h5
+*.pkl
 
 # Original data
 edge_ml_gateway/iot_data.db
 iot_data.db
+
+# RAM vault (volatile keys — never persist)
+/mnt/vault_keys/
+
+# Firmware build artifacts
+*.bin
+*.elf
+
+# Hardware config (contains secrets)
+config.h
+config.json
+
+# Blockchain local data
+ganache_db/
+
+# Node.js (Truffle/Hardhat)
+node_modules/
+build/

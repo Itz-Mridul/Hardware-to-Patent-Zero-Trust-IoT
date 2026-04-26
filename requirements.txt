@@ -1,0 +1,24 @@
+# Zero-Trust IoT Security Gateway — Python Dependencies
+# Install: pip install -r requirements.txt
+
+# ── Core ──────────────────────────────────────────────────────
+paho-mqtt>=2.0.0
+flask>=3.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+numpy>=1.26.0
+
+# ── Machine Learning ──────────────────────────────────────────
+tensorflow>=2.15.0
+scikit-learn>=1.4.0
+
+# ── Blockchain ────────────────────────────────────────────────
+web3>=6.0.0
+
+# ── Image Processing (Anti-Deepfake RGB Validator) ────────────
+opencv-python-headless>=4.9.0
+Pillow>=10.0.0
+
+# ── Raspberry Pi GPIO (install only on Pi) ────────────────────
+# RPi.GPIO>=0.7.1
+# adafruit-circuitpython-dht>=4.0.0
