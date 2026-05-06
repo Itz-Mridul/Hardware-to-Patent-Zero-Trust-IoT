@@ -60,6 +60,17 @@ DHT22_PIN          = int(os.environ.get("DHT22_GPIO_PIN",    "4"))
 DHT22_INTERVAL_S   = float(os.environ.get("DHT22_INTERVAL_S", "5"))
 DEBOUNCE_MS        = int(os.environ.get("SW420_DEBOUNCE_MS", "500"))
 
+# ── Arduino Watchdog Serial Configuration ───────────────────────────────────
+# The Arduino Uno is the air-gapped watchdog. It connects to the Pi via USB.
+# The Pi must send "PING\n" to the Arduino every ~10 seconds or the Arduino
+# will assume the Pi is frozen and trigger the physical kill-switch relay.
+#
+# Find the port with: ls /dev/ttyUSB* or ls /dev/ttyACM*
+# Typical values: /dev/ttyUSB0  or  /dev/ttyACM0
+ARDUINO_SERIAL_PORT  = os.environ.get("ARDUINO_SERIAL_PORT",   "/dev/ttyUSB0")
+ARDUINO_BAUD_RATE    = int(os.environ.get("ARDUINO_BAUD_RATE", "9600"))
+ARDUINO_PING_INTERVAL_S = float(os.environ.get("ARDUINO_PING_INTERVAL_S", "10.0"))
+
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH   = os.environ.get("IOT_DB_PATH", os.path.join(_BASE_DIR, "security.db"))
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
@@ -68,6 +79,7 @@ MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
 _last_tamper_time: float = 0.0
 _tamper_count:     int   = 0
 _mqtt_client            = None   # Injected at startup
+_arduino_serial         = None   # pyserial Serial instance
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -387,6 +399,170 @@ def get_sensor_status() -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Arduino Watchdog Serial Bridge
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _arduino_serial_loop(mqtt_client=None) -> None:
+    """
+    Reads JSON event lines from the Arduino Uno over USB serial and dispatches
+    them to the existing tamper and thermal handlers.
+
+    Also sends a "PING\\n" keepalive every ARDUINO_PING_INTERVAL_S seconds.
+    If the Arduino stops receiving PINGs, it assumes the Pi has frozen and
+    triggers its physical kill-switch relay independently.
+
+    Protocol (Arduino → Pi):
+        {"event": "ENVIRONMENT", "temperature": 23.5, "humidity": 55.2}
+        {"event": "PHYSICAL_TAMPER", "sensor": "SW420", "action": "KILL_SWITCH_TRIGGERING"}
+        {"event": "THERMAL_EMERGENCY", "action": "KILL_SWITCH_TRIGGERING"}
+        {"event": "WATCHDOG_ONLINE", "status": "ARMED"}
+        {"event": "DHT22_READ_ERROR", "action": "SENSOR_FAULT"}
+    """
+    global _arduino_serial
+
+    try:
+        import serial  # type: ignore  # pip install pyserial
+    except ImportError:
+        print("[ARDUINO] pyserial not installed — Arduino bridge disabled.")
+        print("          Install with: pip install pyserial")
+        return
+
+    try:
+        _arduino_serial = serial.Serial(
+            ARDUINO_SERIAL_PORT, ARDUINO_BAUD_RATE, timeout=1
+        )
+        print(
+            f"[ARDUINO] ✅ Connected to watchdog on {ARDUINO_SERIAL_PORT} "
+            f"@ {ARDUINO_BAUD_RATE} baud"
+        )
+    except serial.SerialException as exc:
+        print(f"[ARDUINO] ❌ Cannot open {ARDUINO_SERIAL_PORT}: {exc}")
+        print("          Check: ls /dev/ttyUSB* or ls /dev/ttyACM*")
+        print("          Set ARDUINO_SERIAL_PORT= env var to the correct port.")
+        return
+
+    last_ping_sent = time.time()
+
+    while True:
+        now = time.time()
+
+        # ── 1. Send PING keepalive to prevent Arduino watchdog trigger ────────
+        if now - last_ping_sent >= ARDUINO_PING_INTERVAL_S:
+            last_ping_sent = now
+            try:
+                _arduino_serial.write(b"PING\n")
+            except Exception as exc:
+                print(f"[ARDUINO] PING write failed: {exc}")
+
+        # ── 2. Read a line from the Arduino ───────────────────────────────────
+        try:
+            raw = _arduino_serial.readline()
+        except Exception as exc:
+            print(f"[ARDUINO] Read error: {exc}")
+            time.sleep(1)
+            continue
+
+        if not raw:
+            continue  # timeout — no data this second
+
+        try:
+            line = raw.decode("utf-8", errors="ignore").strip()
+            if not line:
+                continue
+            data = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            print(f"[ARDUINO] Unparseable line: {raw!r}")
+            continue
+
+        event = data.get("event", "")
+        print(f"[ARDUINO] ← {line}")
+
+        # ── 3. Dispatch based on event type ───────────────────────────────────
+
+        if event == "PHYSICAL_TAMPER":
+            # Arduino has detected vibration AND is about to cut power.
+            # Log the event immediately — this may be the last thing we do.
+            _log_tamper_event("PHYSICAL_TAMPER_ARDUINO", _tamper_count + 1, 0)
+            try:
+                from pi_backend.key_vault import emergency_wipe
+                emergency_wipe()
+                print("[ARDUINO] ⚡ Emergency key wipe executed.")
+            except Exception as exc:
+                print(f"[ARDUINO] Key wipe error: {exc}")
+            if mqtt_client:
+                try:
+                    payload = json.dumps({
+                        "event": "PHYSICAL_TAMPER",
+                        "source": "ARDUINO_WATCHDOG",
+                        "action": "KILL_SWITCH_TRIGGERED",
+                        "timestamp": int(now),
+                    })
+                    mqtt_client.publish("security/lockdown", payload, qos=2)
+                except Exception as exc:
+                    print(f"[ARDUINO] MQTT publish failed: {exc}")
+
+        elif event == "ENVIRONMENT":
+            # Arduino DHT22 reading — dispatch through thermal monitor
+            temp = data.get("temperature")
+            hum  = data.get("humidity")
+            if temp is not None and hum is not None:
+                try:
+                    from pi_backend.thermal_monitor import handle_thermal_event
+                    result = handle_thermal_event(
+                        device_id="ARDUINO_DHT22",
+                        temperature=temp,
+                        mqtt_client=mqtt_client,
+                    )
+                    event_type = result.get("event_type", "NORMAL")
+                    if event_type != "NORMAL":
+                        print(f"[ARDUINO] ⚠️  Thermal event from Arduino: {event_type}")
+                except Exception as exc:
+                    print(f"[ARDUINO] Thermal handler error: {exc}")
+
+        elif event == "THERMAL_EMERGENCY":
+            # Arduino has independently decided to cut power — log and wipe
+            _log_tamper_event("THERMAL_EMERGENCY_ARDUINO", 0, 0)
+            try:
+                from pi_backend.key_vault import emergency_wipe
+                emergency_wipe()
+            except Exception:
+                pass
+
+        elif event == "WATCHDOG_ONLINE":
+            print("[ARDUINO] ✅ Arduino watchdog is armed and online.")
+
+        elif event == "DHT22_READ_ERROR":
+            print("[ARDUINO] ⚠️  Arduino DHT22 sensor fault — check wiring on Pin 2.")
+
+
+def start_arduino_serial_listener(mqtt_client=None) -> threading.Thread:
+    """
+    Starts the Arduino Uno serial bridge as a daemon background thread.
+
+    This is the glue between the air-gapped Arduino watchdog and the Pi's
+    Python backend. Without this running, the Arduino will still trigger the
+    kill-switch autonomously, but the Pi will not receive any sensor data.
+
+    Returns:
+        The background thread (already started, daemon=True), or None if
+        pyserial is unavailable.
+    """
+    t = threading.Thread(
+        target=_arduino_serial_loop,
+        args=(mqtt_client,),
+        name="ArduinoSerialBridge",
+        daemon=True,
+    )
+    t.start()
+    print(
+        f"[ARDUINO] Serial bridge thread started "
+        f"(port={ARDUINO_SERIAL_PORT}, baud={ARDUINO_BAUD_RATE}, "
+        f"ping_interval={ARDUINO_PING_INTERVAL_S}s)"
+    )
+    return t
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Standalone service entry point
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -412,8 +588,12 @@ def main() -> None:
 
     client = _start_mqtt()
 
+    # Start GPIO-based sensors (legacy / fallback for when Arduino is not connected)
     start_tamper_monitor(mqtt_client=client)
     start_dht22_monitor(mqtt_client=client)
+
+    # Start the Arduino Uno serial bridge (primary sensor path)
+    start_arduino_serial_listener(mqtt_client=client)
 
     # Graceful shutdown on Ctrl+C / SIGTERM
     def _shutdown(sig, frame):
@@ -425,7 +605,7 @@ def main() -> None:
     signal.signal(signal.SIGINT,  _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    print("[SENSOR] Both sensors active. Monitoring...")
+    print("[SENSOR] All sensors active (GPIO + Arduino serial bridge). Monitoring...")
 
     # Keep main thread alive so daemon threads keep running
     while True:

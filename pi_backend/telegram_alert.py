@@ -9,12 +9,18 @@ import paho.mqtt.client as mqtt
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip().strip('"').strip("'")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip().strip('"').strip("'")
+PI_LOCAL_IP = os.environ.get("PI_LOCAL_IP", "127.0.0.1").strip().strip('"').strip("'")
+DASHBOARD_PORT = os.environ.get("DASHBOARD_PORT", "5001").strip().strip('"').strip("'")
 
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "127.0.0.1")
 MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
-MQTT_TOPICS = ("mailbox/tamper", "security/lockdown")
+MQTT_TOPICS = (
+    "mailbox/tamper",
+    "security/lockdown",
+    "alerts/telegram",   # general alert bus (used by nonce_challenger, etc.)
+)
 
 _MQTT_RETRY_DELAY_S = 5  # seconds between reconnect attempts
 
@@ -78,12 +84,18 @@ def on_message(client, userdata, msg):
         data = json.loads(payload)
         if not isinstance(data, dict):
             data = {"event": "INVALID_ALERT_PAYLOAD", "raw": str(data)}
-        alert_text = format_alert_message(msg.topic, data)
 
+        # Support plain {"message": "..."} format used by nonce_challenger etc.
+        if "message" in data and msg.topic == "alerts/telegram":
+            send_telegram_alert(data["message"])
+            return
+
+        alert_text = format_alert_message(msg.topic, data)
         send_telegram_alert(alert_text)
 
     except json.JSONDecodeError:
-        print("Received invalid JSON format.")
+        # Plain-text payload fallback
+        send_telegram_alert(f"⚠️ Alert on {msg.topic}:\n{payload[:500]}")
 
 
 def format_alert_message(topic, data):
@@ -98,7 +110,8 @@ def format_alert_message(topic, data):
             f"<b>Target:</b> <code>{device}</code>\n"
             f"<b>Trigger:</b> <code>{event}</code>\n"
             f"<b>Action:</b> <code>{action}</code>\n"
-            "⚠️ <b>System entered lockdown. Check the dashboard immediately.</b>"
+            f"⚠️ <b>System entered lockdown. Check the dashboard immediately:</b>\n"
+            f"🔗 http://{PI_LOCAL_IP}:{DASHBOARD_PORT}"
         )
 
     return (
@@ -107,7 +120,8 @@ def format_alert_message(topic, data):
         "<b>Trigger:</b> Physical Tampering Detected\n"
         f"<b>Sensor:</b> <code>{sensor}</code>\n"
         f"<b>Action:</b> <code>{action}</code>\n\n"
-        "⚠️ <b>Please check the Sentry Web GUI immediately!</b>"
+        f"⚠️ <b>Please check the Sentry Web GUI immediately:</b>\n"
+        f"🔗 http://{PI_LOCAL_IP}:{DASHBOARD_PORT}"
     )
 
 

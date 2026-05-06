@@ -1,0 +1,29 @@
+{
+  "_README": {
+    "format": "UID (uppercase hex, no spaces) → user record",
+    "fields": {
+      "name":        "Must match exactly what is written on card Block 4 (case-insensitive compare)",
+      "gender":      "Single char: M or F (case-insensitive compare)",
+      "secret_code": "Exactly 4 ASCII digits e.g. '1234' — must match card Block 5 bytes 1-4"
+    },
+    "how_to_write_card": {
+      "tool":   "Use mfrc522_card_writer.py (see below) OR MIFARE Classic Tool Android app",
+      "sector": "Sector 1",
+      "block4": "Name padded to 16 bytes with spaces e.g. 'Mridul          '",
+      "block5": "Gender byte + 4 code bytes + 11 null bytes e.g. 'M1234\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00'",
+      "key_A":  "FF FF FF FF FF FF (default, do not change for demo)"
+    }
+  },
+
+  "AABBCCDD": {
+    "name":        "Mridul",
+    "gender":      "M",
+    "secret_code": "1234"
+  },
+
+  "11223344": {
+    "name":        "Onkar",
+    "gender":      "M",
+    "secret_code": "9600"
+  }
+}

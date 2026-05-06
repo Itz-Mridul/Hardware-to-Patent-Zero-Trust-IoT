@@ -17,9 +17,26 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    echo -e "\033[0;32m✅ Loading environment variables from .env\033[0m"
+    set -a
+    source "$SCRIPT_DIR/.env"
+    set +a
+fi
+
 VENV="$SCRIPT_DIR/.venv/bin/activate"
 LOG_DIR="$SCRIPT_DIR/logs"
 DASHBOARD_PORT="${DASHBOARD_PORT:-5001}"
+
+# macOS / Linux compatible IP detection
+if command -v ipconfig &>/dev/null; then
+    HOST_IP=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "localhost")
+elif command -v hostname &>/dev/null; then
+    HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
+else
+    HOST_IP="localhost"
+fi
 
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -64,7 +81,7 @@ else:
             a.enroll()
         else:
             print(f'      ❌ {alert}')
-" || echo -e "${YELLOW}  Attestation skipped (library not available)${NC}"
+" || echo -e "${YELLOW}  Attestation skipped (library not available or first boot)${NC}"
 
 # ── Kill any stale processes ───────────────────────────────────
 echo ""
@@ -89,7 +106,7 @@ if [ ! -f "$SCRIPT_DIR/certs/ca.crt" ]; then
     python3 "$SCRIPT_DIR/pi_backend/mqtts_config.py" \
         --generate \
         --out "$SCRIPT_DIR/certs" \
-        --pi-ip "${PI_IP:-192.168.1.109}" \
+        --pi-ip "${PI_LOCAL_IP:-192.168.1.113}" \
         --devices esp32_cam esp32_gateway pi_backend \
     && echo -e "${GREEN}✅ TLS certificates generated in ./certs/${NC}" \
     || echo -e "${YELLOW}⚠️  Cert generation skipped (openssl not found)${NC}"
@@ -137,7 +154,7 @@ echo -e "  ${GREEN}${BOLD}All services running!${NC}"
 echo ""
 echo -e "  IoT + AI Engine  → ${BOLD}port 5005${NC}   (PID $IOT_PID)"
 echo -e "  Defense Sensors  → ${BOLD}background${NC} (PID $SENSOR_PID)"
-echo -e "  Dashboard        → ${BOLD}http://$(hostname -I | awk '{print $1}'):$DASHBOARD_PORT${NC}  (PID $DASH_PID)"
+echo -e "  Dashboard        → ${BOLD}http://${HOST_IP}:$DASHBOARD_PORT${NC}  (PID $DASH_PID)"
 echo -e "  Telegram Alerts  → (PID $TG_PID)"
 echo ""
 echo "  Logs → $LOG_DIR/"

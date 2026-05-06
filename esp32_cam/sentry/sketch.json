@@ -1,0 +1,6 @@
+{
+  "cpu": {
+    "fqbn": "esp32:esp32:esp32cam:CPUFreq=240,FlashMode=dio,FlashFreq=80,UploadSpeed=115200",
+    "name": "AI Thinker ESP32-CAM (DIO Flash Mode)"
+  }
+}

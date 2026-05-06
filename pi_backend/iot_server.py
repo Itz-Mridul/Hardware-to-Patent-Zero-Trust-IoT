@@ -8,13 +8,28 @@ listener so the server can distinguish:
 - hard disconnects (broker LWT -> freeze trust)
 - reconnects/boots (short grace period)
 - genuine spoofing (too-fast packet cadence)
+
+Also handles card-payload validation (mailbox/access):
+- HMAC-SHA256 signature verification
+- UID lookup in authorized_users.json
+- Name / gender / secret-code match
+- GRANT or DENY reply to ESP32 on mailbox/decision
+- Access log (access_log.json) + photo save + Telegram deny alert
 """
 
+import datetime
+import hashlib
+import hmac as hmac_lib
 import json
 import os
 import sqlite3
 import threading
 import time
+
+try:
+    import requests as _requests
+except ImportError:
+    _requests = None
 
 try:
     from flask import Flask, jsonify, request
@@ -63,30 +78,282 @@ try:
 except ImportError:  # pragma: no cover - keeps the HTTP server usable without MQTT
     mqtt = None
 
+try:
+    from pathlib import Path
+except ImportError:  # pragma: no cover
+    Path = None  # type: ignore
+
 
 app = Flask(__name__)
 
-# Database path (dynamic and environment-aware to prevent cross-platform crashes)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "security.db")
+# ── Paths & core config ──────────────────────────────────────────────────────
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+DB_PATH    = os.path.join(BASE_DIR, "security.db")
+
+# Resolve project root (one level up from pi_backend/)
+_PROJECT_ROOT = os.path.dirname(BASE_DIR)
 
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
-MQTT_PORT = int(os.environ.get("MQTT_PORT", "1883"))
-MQTT_STATUS_TOPIC = os.environ.get("MQTT_STATUS_TOPIC", "mailbox/status")
-MQTT_HEARTBEAT_TOPIC = os.environ.get("MQTT_HEARTBEAT_TOPIC", "mailbox/heartbeat")
-MQTT_ENVIRONMENT_TOPIC = os.environ.get("MQTT_ENVIRONMENT_TOPIC", "mailbox/environment")
-MQTT_PHOTO_PREFIX = os.environ.get("MQTT_PHOTO_PREFIX", "mailbox/photo/")
+MQTT_PORT   = int(os.environ.get("MQTT_PORT", "1883"))
+MQTT_STATUS_TOPIC       = os.environ.get("MQTT_STATUS_TOPIC",       "mailbox/status")
+MQTT_HEARTBEAT_TOPIC    = os.environ.get("MQTT_HEARTBEAT_TOPIC",    "mailbox/heartbeat")
+MQTT_ENVIRONMENT_TOPIC  = os.environ.get("MQTT_ENVIRONMENT_TOPIC",  "mailbox/environment")
+MQTT_PHOTO_PREFIX       = os.environ.get("MQTT_PHOTO_PREFIX",       "mailbox/photo/")
+MQTT_ACCESS_TOPIC       = "mailbox/access"
+MQTT_DECISION_TOPIC     = "mailbox/decision"
+MQTT_NONCE_RESP_TOPIC   = "perimeter/nonce_response"
 MQTT_RETRY_DELAY_SECONDS = int(os.environ.get("MQTT_RETRY_DELAY_SECONDS", "5"))
 
 GRACE_PERIOD_SECONDS = int(os.environ.get("GRACE_PERIOD_SECONDS", "10"))
-BLOCK_THRESHOLD = float(os.environ.get("BLOCK_THRESHOLD", "50"))
-MAX_TRUST_SCORE = float(os.environ.get("MAX_TRUST_SCORE", "100"))
-MIN_TRUST_SCORE = float(os.environ.get("MIN_TRUST_SCORE", "0"))
-EXPECTED_IPD_MS = int(os.environ.get("EXPECTED_IPD_MS", "5000"))
+BLOCK_THRESHOLD  = float(os.environ.get("BLOCK_THRESHOLD",  "50"))
+MAX_TRUST_SCORE  = float(os.environ.get("MAX_TRUST_SCORE",  "100"))
+MIN_TRUST_SCORE  = float(os.environ.get("MIN_TRUST_SCORE",  "0"))
+EXPECTED_IPD_MS  = int(os.environ.get("EXPECTED_IPD_MS",   "5000"))
+
+# ── Access-control config ─────────────────────────────────────────────────────
+HMAC_SECRET_KEY   = os.environ.get("HMAC_SECRET_KEY",   "CHANGE_ME_TO_32_BYTE_SECRET_KEY!").encode()
+TELEGRAM_TOKEN    = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID  = os.environ.get("TELEGRAM_CHAT_ID",  "")
+NONCE_EXPIRY_SEC  = 60
+FPGA_THRESHOLD_US = int(os.environ.get("FPGA_THRESHOLD_US", "10"))
+
+USERS_FILE = os.path.join(_PROJECT_ROOT, "authorized_users.json")
+LOG_FILE   = os.path.join(_PROJECT_ROOT, "access_log.json")
+PHOTO_DIR  = os.path.join(_PROJECT_ROOT, "photos")
+os.makedirs(PHOTO_DIR, exist_ok=True)
+
+# ── Access-control runtime state ──────────────────────────────────────────────
+_used_nonces    = {}   # {nonce_int: timestamp_float}
+_pending_photos = {}   # {uid_str: bytes}  — buffered until payload arrives
 
 
 def clamp(value, lower=MIN_TRUST_SCORE, upper=MAX_TRUST_SCORE):
     return max(lower, min(upper, float(value)))
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 🔐 ACCESS CONTROL — card-payload validation
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _load_users() -> dict:
+    """Load authorized_users.json, returning empty dict on any error."""
+    if not os.path.exists(USERS_FILE):
+        print(f"[⚠️  DB  ] {USERS_FILE} not found — no users authorised.")
+        return {}
+    try:
+        with open(USERS_FILE) as f:
+            return json.load(f)
+    except Exception as exc:
+        print(f"[⚠️  DB  ] Failed to load users file: {exc}")
+        return {}
+
+
+def _purge_nonces():
+    """Remove nonces older than NONCE_EXPIRY_SEC to prevent unbounded growth."""
+    cutoff = time.time() - NONCE_EXPIRY_SEC
+    expired = [n for n, t in _used_nonces.items() if t < cutoff]
+    for n in expired:
+        del _used_nonces[n]
+
+
+def _verify_hmac(payload_str: str, received_sig: str, nonce: int):
+    """
+    Returns (is_valid: bool, reason: str).
+
+    IMPORTANT — key ordering note:
+    The ESP32 (ArduinoJson) serialises keys in insertion order, NOT sorted.
+    We therefore verify against the *raw received JSON string* with the "sig"
+    field stripped, not a re-serialised copy.  The Pi side must NOT re-encode
+    the dict (which would sort keys) before computing the expected HMAC.
+    """
+    _purge_nonces()
+    if nonce in _used_nonces:
+        return False, "REPLAY_ATTACK"
+    expected = hmac_lib.new(HMAC_SECRET_KEY,
+                            payload_str.encode(),
+                            hashlib.sha256).hexdigest()[:32]
+    if hmac_lib.compare_digest(expected, received_sig.lower()):
+        _used_nonces[nonce] = time.time()
+        return True, "OK"
+    return False, "HMAC_MISMATCH"
+
+
+def _log_access(uid: str, name: str, gender: str,
+                decision: str, reason: str, photo_path: str = ""):
+    """Append one entry to access_log.json (create file if absent)."""
+    entry = {
+        "timestamp":  datetime.datetime.now().isoformat(),
+        "uid":        uid,
+        "name":       name,
+        "gender":     gender,
+        "decision":   decision,
+        "reason":     reason,
+        "photo_path": photo_path,
+    }
+    log = []
+    if os.path.exists(LOG_FILE):
+        try:
+            with open(LOG_FILE) as f:
+                log = json.load(f)
+        except Exception:
+            log = []
+    log.append(entry)
+    try:
+        with open(LOG_FILE, "w") as f:
+            json.dump(log, f, indent=2)
+    except Exception as exc:
+        print(f"[⚠️  LOG ] Write failed: {exc}")
+    print(f" [ 📋 LOG ] {decision} | {name} ({uid}) | {reason}")
+
+
+def _save_photo(uid: str, photo_bytes: bytes) -> str:
+    """Write buffered JPEG to photos/ and return the saved path."""
+    ts       = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = os.path.join(PHOTO_DIR, f"{uid}_{ts}.jpg")
+    try:
+        with open(filename, "wb") as f:
+            f.write(photo_bytes)
+        print(f" [ 📸 CAM ] Photo saved: {filename}")
+    except Exception as exc:
+        print(f"[⚠️  CAM ] Photo save failed: {exc}")
+        return ""
+    return filename
+
+
+def _send_telegram_deny(name: str, uid: str, gender: str,
+                        secret_code: str, reason: str, photo_path: str = ""):
+    """Fire-and-forget Telegram deny alert (runs in daemon thread)."""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print(" [ ⚠️  TG  ] No Telegram credentials — alert skipped.")
+        return
+    if _requests is None:
+        print(" [ ⚠️  TG  ] requests library not installed — alert skipped.")
+        return
+
+    ts      = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    caption = (
+        f"🚨 *ACCESS DENIED*\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"🕐 Time:   `{ts}`\n"
+        f"🆔 UID:    `{uid}`\n"
+        f"👤 Name:   `{name}`\n"
+        f"⚧ Gender: `{gender}`\n"
+        f"🔑 Code:   `{secret_code}`\n"
+        f"❌ Reason: `{reason}`\n"
+        f"━━━━━━━━━━━━━━━━"
+    )
+
+    def _send():
+        base = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+        try:
+            if photo_path and os.path.exists(photo_path):
+                with open(photo_path, "rb") as img:
+                    resp = _requests.post(
+                        f"{base}/sendPhoto",
+                        data={"chat_id": TELEGRAM_CHAT_ID,
+                              "caption": caption, "parse_mode": "Markdown"},
+                        files={"photo": img}, timeout=10)
+            else:
+                resp = _requests.post(
+                    f"{base}/sendMessage",
+                    json={"chat_id": TELEGRAM_CHAT_ID,
+                          "text": caption, "parse_mode": "Markdown"},
+                    timeout=10)
+            if resp.status_code == 200:
+                print(" [ ✅  TG  ] Telegram deny alert sent.")
+            else:
+                print(f" [ ❌  TG  ] Telegram error: {resp.text[:200]}")
+        except Exception as exc:
+            print(f" [ ❌  TG  ] Exception: {exc}")
+
+    threading.Thread(target=_send, daemon=True).start()
+
+
+def _grant(mqtt_client, uid: str, name: str, gender: str):
+    ts         = datetime.datetime.now().isoformat()
+    photo_path = ""
+    if uid in _pending_photos:
+        photo_path = _save_photo(uid, _pending_photos.pop(uid))
+    decision_payload = json.dumps(
+        {"decision": "GRANT", "uid": uid, "name": name, "timestamp": ts})
+    mqtt_client.publish(MQTT_DECISION_TOPIC, decision_payload)
+    _log_access(uid, name, gender, "GRANT", "ALL_OK", photo_path)
+    print(f"\n ✅ GRANTED → {name} ({uid}) at {ts}\n")
+
+
+def _deny(mqtt_client, uid: str, name: str,
+          gender: str, secret_code: str, reason: str):
+    ts         = datetime.datetime.now().isoformat()
+    photo_path = ""
+    if uid in _pending_photos:
+        photo_path = _save_photo(uid, _pending_photos.pop(uid))
+    decision_payload = json.dumps(
+        {"decision": "DENY", "uid": uid, "reason": reason, "timestamp": ts})
+    mqtt_client.publish(MQTT_DECISION_TOPIC, decision_payload)
+    _log_access(uid, name, gender, "DENY", reason, photo_path)
+    _send_telegram_deny(name, uid, gender, secret_code, reason, photo_path)
+    print(f"\n ❌ DENIED  → {name} ({uid}) | {reason}\n")
+
+
+def process_access_payload(data: dict, mqtt_client):
+    """
+    Validate a card-tap payload from the ESP32 and publish GRANT or DENY.
+
+    Pipeline:
+      1. Extract fields from payload dict.
+      2. Reconstruct the raw JSON string (without "sig") that the ESP32 signed.
+         We use the raw_payload_str if provided (preserves key order), else fall
+         back to re-serialising without sig (works only if order matches).
+      3. HMAC-SHA256 verify.
+      4. Replay-nonce check.
+      5. UID lookup in authorized_users.json.
+      6. Name / gender / secret_code comparison.
+      7. GRANT or DENY.
+    """
+    uid          = str(data.get("uid",         ""))
+    name         = str(data.get("name",        ""))
+    gender       = str(data.get("gender",      ""))
+    secret_code  = str(data.get("secret_code", ""))
+    nonce        = int(data.get("nonce",       0))
+    received_sig = str(data.get("sig",         ""))
+    # raw_json_no_sig is set by the caller if it preserved the original bytes
+    raw_payload_str = data.pop("_raw_no_sig", None)
+
+    if raw_payload_str is None:
+        # Fallback: re-serialise without sig (key order may differ on older firmware)
+        payload_copy    = {k: v for k, v in data.items() if k != "sig"}
+        raw_payload_str = json.dumps(payload_copy, separators=(',', ':'))
+
+    # 1. HMAC check
+    hmac_ok, hmac_reason = _verify_hmac(raw_payload_str, received_sig, nonce)
+    if not hmac_ok:
+        print(f" [ 🚨 SEC ] HMAC fail: {hmac_reason} | UID: {uid}")
+        _deny(mqtt_client, uid, name, gender, secret_code, hmac_reason)
+        return
+
+    # 2. User DB lookup
+    users = _load_users()
+    # Skip _README meta-key
+    if uid not in users or uid == "_README":
+        _deny(mqtt_client, uid, name, gender, secret_code, "UID_NOT_REGISTERED")
+        return
+
+    expected = users[uid]
+
+    # 3. Field validation (case-insensitive for name and gender)
+    errors = []
+    if name.strip().lower() != expected.get("name", "").strip().lower():
+        errors.append("NAME_MISMATCH")
+    if gender.upper() != expected.get("gender", "").upper():
+        errors.append("GENDER_MISMATCH")
+    if secret_code != expected.get("secret_code", ""):
+        errors.append("CODE_MISMATCH")
+
+    if errors:
+        _deny(mqtt_client, uid, name, gender, secret_code, "+".join(errors))
+        return
+
+    _grant(mqtt_client, uid, name, gender)
 
 
 def init_db():
@@ -748,10 +1015,12 @@ def handle_photo_message(topic, payload):
 def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
     if reason_code == 0:
         subscriptions = (
-            (MQTT_STATUS_TOPIC, 1),
-            (MQTT_HEARTBEAT_TOPIC, 1),
-            (MQTT_ENVIRONMENT_TOPIC, 0),
+            (MQTT_STATUS_TOPIC,       1),
+            (MQTT_HEARTBEAT_TOPIC,    1),
+            (MQTT_ENVIRONMENT_TOPIC,  0),
             (f"{MQTT_PHOTO_PREFIX}+", 0),
+            (MQTT_ACCESS_TOPIC,       1),   # card-tap payloads from ESP32
+            (MQTT_NONCE_RESP_TOPIC,   0),   # anti-FPGA puzzle responses
         )
         print("Connected to MQTT broker. Subscribing to telemetry topics.")
         for topic, qos in subscriptions:
@@ -761,15 +1030,61 @@ def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
         print(f"Failed to connect to MQTT broker. Code: {reason_code}")
 
 
+def handle_access_message(topic, payload, mqtt_client):
+    """Validate a card-tap payload and publish GRANT/DENY to the ESP32."""
+    try:
+        raw_str = payload.decode() if isinstance(payload, bytes) else payload
+        data    = json.loads(raw_str)
+        if not isinstance(data, dict):
+            raise ValueError("payload is not a JSON object")
+        # Preserve the raw JSON string (without "sig") so HMAC uses original
+        # key order (ArduinoJson inserts in code order, NOT alphabetically).
+        sig = data.get("sig", "")
+        # Strip sig from raw string rather than re-serialising the dict
+        raw_no_sig = raw_str
+        for suffix in (f',"sig":"{sig}"', f',"sig": "{sig}"',
+                       f'"sig":"{sig}",',  f'"sig": "{sig}",'):
+            if suffix in raw_no_sig:
+                raw_no_sig = raw_no_sig.replace(suffix, "", 1)
+                break
+        data["_raw_no_sig"] = raw_no_sig.strip()
+        process_access_payload(data, mqtt_client)
+    except Exception as exc:
+        print(f" [ ❌ ACC ] Parse/process error: {exc}")
+
+
+def handle_nonce_response_message(topic, payload):
+    """Log FPGA puzzle solve times; flag suspiciously fast responses."""
+    try:
+        data     = json.loads(payload.decode() if isinstance(payload, bytes) else payload)
+        solve_us = int(data.get("solve_time_us", 9999))
+        dev_id   = data.get("device_id", "?")
+        if solve_us < FPGA_THRESHOLD_US:
+            print(f" [ 🚨 FPGA] {dev_id} solved in {solve_us}µs "
+                  f"< threshold {FPGA_THRESHOLD_US}µs — possible FPGA clone!")
+        else:
+            print(f" [ ✅ CPU ] {dev_id} nonce solved in {solve_us}µs — hardware OK.")
+    except Exception:
+        pass
+
+
 def on_mqtt_message(client, userdata, msg):
     if msg.topic == MQTT_STATUS_TOPIC:
-        handle_status_message(msg.topic, msg.payload, retained=getattr(msg, "retain", False))
+        handle_status_message(msg.topic, msg.payload,
+                              retained=getattr(msg, "retain", False))
     elif msg.topic == MQTT_HEARTBEAT_TOPIC:
         handle_heartbeat_message(msg.topic, msg.payload)
     elif msg.topic == MQTT_ENVIRONMENT_TOPIC:
         handle_environment_message(msg.topic, msg.payload)
     elif msg.topic.startswith(MQTT_PHOTO_PREFIX):
-        handle_photo_message(msg.topic, msg.payload)
+        # Buffer raw photo bytes; saved when GRANT/DENY is issued
+        uid = msg.topic[len(MQTT_PHOTO_PREFIX):] or "unknown"
+        _pending_photos[uid] = bytes(msg.payload)
+        print(f" [ 📷 CAM ] Photo buffered for UID: {uid} ({len(msg.payload)} bytes)")
+    elif msg.topic == MQTT_ACCESS_TOPIC:
+        handle_access_message(msg.topic, msg.payload, client)
+    elif msg.topic == MQTT_NONCE_RESP_TOPIC:
+        handle_nonce_response_message(msg.topic, msg.payload)
 
 
 def mqtt_status_listener():

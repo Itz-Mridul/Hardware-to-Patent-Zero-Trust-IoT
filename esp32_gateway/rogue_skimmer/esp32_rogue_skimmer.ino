@@ -40,9 +40,9 @@
 #include <ArduinoJson.h>
 
 // ── Credentials (must match the target network) ────────────────────────────
-#define WIFI_SSID        "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD    "YOUR_WIFI_PASSWORD"
-#define MQTT_BROKER      "192.168.1.109"
+#define WIFI_SSID        "Room203"
+#define WIFI_PASSWORD    "Hostel@203"
+#define MQTT_BROKER      "192.168.1.113"
 #define MQTT_PORT        1883
 #define MQTT_CLIENT_ID   "ESP32_ROGUE_SKIMMER"
 #define ATTACKER_ID      "ESP32_ROGUE_SKIMMER"

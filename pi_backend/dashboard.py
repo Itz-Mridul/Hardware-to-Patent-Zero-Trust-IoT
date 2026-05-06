@@ -12,14 +12,18 @@ Zero-Trust IoT Security Dashboard
 Run:
     python3 pi_backend/dashboard.py
 
-Then open http://localhost:5000 in your browser.
+Then open http://localhost:5001 in your browser.
 """
 
 import json
 import os
 import sqlite3
+import sys
 import time
 from pathlib import Path
+
+# Add project root to path so we can import from pi_backend directly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 try:
     from flask import Flask, Response, jsonify, render_template_string, stream_with_context
@@ -54,9 +58,9 @@ DASHBOARD_HTML = """
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Zero-Trust IoT Gateway — Security Dashboard</title>
+  <title>Zero-Trust Command Center</title>
   <meta name="description" content="Real-time Zero-Trust IoT Security monitoring dashboard with AI hardware fingerprinting and blockchain forensic evidence logging." />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
   <style>
     :root {
       --bg:        #0d0f14;
@@ -71,7 +75,7 @@ DASHBOARD_HTML = """
       --cyan:      #06b6d4;
       --purple:    #8b5cf6;
       --radius:    12px;
-      --shadow:    0 4px 24px rgba(0,0,0,.4);
+      --shadow:    0 8px 32px rgba(0,0,0,.5);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -81,6 +85,7 @@ DASHBOARD_HTML = """
       color: var(--text);
       font-family: 'Inter', sans-serif;
       min-height: 100vh;
+      overflow-x: hidden;
     }
 
     /* ── HEADER ── */
@@ -88,84 +93,85 @@ DASHBOARD_HTML = """
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 1.25rem 2rem;
-      background: var(--surface);
+      padding: 1.25rem 2.5rem;
+      background: rgba(22, 27, 39, 0.8);
+      backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
       z-index: 100;
     }
     header h1 {
-      font-size: 1.1rem;
+      font-size: 1.25rem;
       font-weight: 700;
-      letter-spacing: -.3px;
+      letter-spacing: -0.5px;
       background: linear-gradient(90deg, var(--cyan), var(--blue));
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
     .status-pill {
       display: flex;
       align-items: center;
-      gap: .5rem;
-      font-size: .8rem;
-      color: var(--muted);
+      gap: .75rem;
+      font-size: .85rem;
+      font-weight: 600;
+      color: var(--text);
+      background: rgba(255,255,255,0.05);
+      padding: 0.5rem 1rem;
+      border-radius: 99px;
+      border: 1px solid var(--border);
     }
     .dot {
       width: 8px; height: 8px;
       border-radius: 50%;
       background: var(--green);
+      box-shadow: 0 0 10px var(--green);
       animation: pulse 2s infinite;
     }
     @keyframes pulse {
-      0%,100% { opacity: 1; } 50% { opacity: .4; }
+      0%,100% { opacity: 1; box-shadow: 0 0 10px var(--green); } 
+      50% { opacity: .4; box-shadow: 0 0 2px var(--green); }
     }
 
     /* ── LAYOUT ── */
     main {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 1.25rem;
-      padding: 1.5rem 2rem;
-      max-width: 1400px;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 1.5rem;
+      padding: 2rem 2.5rem;
+      max-width: 1600px;
       margin: 0 auto;
     }
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 1.25rem 1.5rem;
+      padding: 1.5rem;
       box-shadow: var(--shadow);
-    }
-    .card-wide { grid-column: span 2; }
-    .card-full { grid-column: span 3; }
-    .card h2 {
-      font-size: .75rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      color: var(--muted);
-      margin-bottom: 1rem;
-    }
-
-    /* ── TRUST GAUGES ── */
-    .device-list { display: flex; flex-direction: column; gap: .85rem; }
-    .device-row { display: flex; flex-direction: column; gap: .3rem; }
-    .device-meta {
       display: flex;
-      justify-content: space-between;
-      font-size: .8rem;
-    }
-    .device-id { font-family: 'JetBrains Mono', monospace; font-size: .75rem; }
-    .trust-bar {
-      height: 8px;
-      border-radius: 99px;
-      background: var(--border);
+      flex-direction: column;
+      position: relative;
       overflow: hidden;
     }
-    .trust-fill {
-      height: 100%;
-      border-radius: 99px;
-      transition: width .6s ease, background .6s ease;
+    /* Grid span helpers */
+    .col-4  { grid-column: span 4; }
+    .col-6  { grid-column: span 6; }
+    .col-8  { grid-column: span 8; }
+    .col-12 { grid-column: span 12; }
+
+    .card h2 {
+      font-size: .75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--muted);
+      margin-bottom: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
     /* ── ATTACK COUNTER ── */
@@ -173,171 +179,320 @@ DASHBOARD_HTML = """
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 1rem;
+      height: 100%;
     }
     .counter-item {
-      background: rgba(255,255,255,.03);
-      border: 1px solid var(--border);
+      background: rgba(255,255,255,.02);
+      border: 1px solid rgba(255,255,255,.05);
       border-radius: 8px;
-      padding: .85rem 1rem;
+      padding: 1.5rem 1rem;
       text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
     }
     .counter-num {
-      font-size: 2.2rem;
+      font-size: 2.8rem;
       font-weight: 700;
       font-family: 'JetBrains Mono', monospace;
+      line-height: 1;
+      text-shadow: 0 0 20px currentColor;
     }
-    .counter-label { font-size: .7rem; color: var(--muted); margin-top: .2rem; }
+    .counter-label { font-size: .75rem; color: var(--muted); margin-top: .5rem; font-weight: 600; }
+
+    /* ── CAMERA PANEL ── */
+    .camera-container {
+      width: 100%;
+      aspect-ratio: 4/3;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid var(--border);
+    }
+    .camera-container img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      filter: contrast(1.1);
+    }
+    .camera-overlay {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 0.75rem;
+      background: linear-gradient(transparent, rgba(0,0,0,0.9));
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--cyan);
+      display: flex;
+      justify-content: space-between;
+    }
+    .rec-indicator {
+      position: absolute;
+      top: 10px; right: 10px;
+      color: var(--red);
+      font-weight: bold;
+      font-size: 0.8rem;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      text-shadow: 0 0 5px black;
+    }
+
+    /* ── PHYSICAL SECURITY (Arduino) ── */
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+    .sensor-card {
+      background: rgba(255,255,255,.02);
+      border-left: 4px solid var(--border);
+      padding: 1rem;
+      border-radius: 0 8px 8px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .sensor-card.safe { border-left-color: var(--green); }
+    .sensor-card.alert { border-left-color: var(--red); background: rgba(239,68,68,0.1); }
+    .sensor-value { font-family: 'JetBrains Mono', monospace; font-size: 1.5rem; font-weight: 700; }
+    .sensor-label { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+
+    /* ── TRUST GAUGES ── */
+    .device-list { display: flex; flex-direction: column; gap: 1rem; }
+    .device-row { 
+      display: flex; flex-direction: column; gap: .5rem; 
+      padding: 1rem;
+      background: rgba(255,255,255,0.02);
+      border-radius: 8px;
+    }
+    .device-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: .85rem;
+    }
+    .device-id { font-family: 'JetBrains Mono', monospace; font-weight: 700; }
+    .trust-bar {
+      height: 12px;
+      border-radius: 99px;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.1);
+      overflow: hidden;
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);
+    }
+    .trust-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width .8s cubic-bezier(0.4, 0, 0.2, 1), background .8s ease;
+      box-shadow: inset 0 2px 4px rgba(255,255,255,0.3);
+    }
 
     /* ── EVENT FEED ── */
-    .feed { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: .5rem; }
-    .feed::-webkit-scrollbar { width: 4px; }
+    .feed { height: 350px; overflow-y: auto; display: flex; flex-direction: column; gap: .5rem; padding-right: 5px; }
+    .feed::-webkit-scrollbar { width: 6px; }
     .feed::-webkit-scrollbar-track { background: transparent; }
     .feed::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
     .event-row {
       display: flex;
       align-items: flex-start;
-      gap: .75rem;
-      padding: .6rem .75rem;
+      gap: 1rem;
+      padding: .85rem 1rem;
       border-radius: 8px;
-      background: rgba(255,255,255,.03);
-      font-size: .78rem;
+      background: rgba(255,255,255,.02);
+      border-left: 3px solid transparent;
+      font-size: .8rem;
       animation: fadeIn .4s ease;
     }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; } }
     .event-badge {
-      font-size: .65rem;
+      font-size: .7rem;
       font-weight: 700;
-      padding: .2rem .5rem;
+      padding: .3rem .6rem;
       border-radius: 4px;
       white-space: nowrap;
+      width: 120px;
+      text-align: center;
     }
     .badge-auth   { background: rgba(16,185,129,.15); color: var(--green); }
     .badge-reject { background: rgba(239,68,68,.15);  color: var(--red); }
     .badge-warn   { background: rgba(245,158,11,.15); color: var(--yellow); }
     .badge-therm  { background: rgba(239,68,68,.25);  color: #ff6060; }
-    .event-device { font-family: 'JetBrains Mono', monospace; color: var(--cyan); }
-    .event-reason { color: var(--muted); font-size: .72rem; margin-top: .15rem; }
-    .event-time   { font-size: .65rem; color: var(--muted); margin-left: auto; white-space: nowrap; }
+    .badge-tamper { background: var(--red); color: #fff; box-shadow: 0 0 10px var(--red); animation: pulse 1s infinite; }
+    
+    .event-device { font-family: 'JetBrains Mono', monospace; color: var(--cyan); font-weight: 600;}
+    .event-reason { color: var(--muted); font-size: .75rem; margin-top: .3rem; }
+    .event-time   { font-size: .7rem; color: var(--muted); margin-left: auto; white-space: nowrap; }
 
     /* ── EVIDENCE TABLE ── */
-    .evidence-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+    .table-container { height: 350px; overflow-y: auto; overflow-x: auto;}
+    .table-container::-webkit-scrollbar { width: 6px; height: 6px;}
+    .table-container::-webkit-scrollbar-track { background: transparent; }
+    .table-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+    
+    .evidence-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: .8rem; }
     .evidence-table th {
-      text-align: left; padding: .5rem .75rem;
-      color: var(--muted); font-size: .68rem; text-transform: uppercase;
-      border-bottom: 1px solid var(--border);
+      text-align: left; padding: .85rem 1rem;
+      color: var(--muted); font-size: .7rem; text-transform: uppercase;
+      border-bottom: 2px solid var(--border);
+      position: sticky; top: 0; background: var(--surface); z-index: 10;
     }
-    .evidence-table td { padding: .55rem .75rem; border-bottom: 1px solid rgba(255,255,255,.04); }
+    .evidence-table td { padding: .85rem 1rem; border-bottom: 1px solid rgba(255,255,255,.04); }
     .evidence-table tr:hover td { background: rgba(255,255,255,.03); }
-    .hash { font-family: 'JetBrains Mono', monospace; font-size: .68rem; color: var(--purple); }
+    .hash { font-family: 'JetBrains Mono', monospace; font-size: .7rem; color: var(--purple); background: rgba(139,92,246,0.1); padding: 2px 6px; border-radius: 4px;}
 
-    /* ── SYSTEM STATS ── */
-    .stats-row { display: flex; gap: 1rem; flex-wrap: wrap; }
-    .stat-chip {
-      background: rgba(255,255,255,.04);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: .5rem 1rem;
-      font-size: .78rem;
-    }
-    .stat-chip span { color: var(--cyan); font-weight: 600; }
-
-    /* ── REFRESH NOTE ── */
     footer {
       text-align: center;
       color: var(--muted);
-      font-size: .72rem;
-      padding: 1.5rem;
+      font-size: .75rem;
+      padding: 2rem;
+      grid-column: span 12;
+      border-top: 1px solid var(--border);
+      margin-top: 2rem;
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>⚡ Zero-Trust IoT Security Gateway</h1>
-    <div class="status-pill">
-      <div class="dot"></div>
-      <span id="clock">—</span>
+    <h1>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+      ZERO-TRUST SECURITY GATEWAY
+    </h1>
+    <div class="status-pill" id="threat-pill">
+      <div class="dot" id="threat-dot"></div>
+      <span id="threat-status">SYSTEM SECURE</span>
+      <span style="color:var(--muted)">|</span>
+      <span id="clock" style="font-family:'JetBrains Mono',monospace">—</span>
     </div>
   </header>
 
   <main>
-    <!-- Attack counters -->
-    <div class="card">
-      <h2>🛡️ Threat Summary</h2>
+    <!-- TOP ROW: Counters & Camera -->
+    <div class="card col-8">
+      <h2>🛡️ AI Threat Radar (CNN-LSTM)</h2>
       <div class="counter-grid">
         <div class="counter-item">
-          <div class="counter-num" id="cnt-total" style="color:var(--blue)">—</div>
-          <div class="counter-label">Total Events</div>
+          <div class="counter-num" id="cnt-total" style="color:var(--cyan)">—</div>
+          <div class="counter-label">TOTAL ACCESS ATTEMPTS</div>
         </div>
         <div class="counter-item">
           <div class="counter-num" id="cnt-rejected" style="color:var(--red)">—</div>
-          <div class="counter-label">Blocked Today</div>
+          <div class="counter-label">ATTACKS BLOCKED TODAY</div>
         </div>
         <div class="counter-item">
           <div class="counter-num" id="cnt-auth" style="color:var(--green)">—</div>
-          <div class="counter-label">Authenticated</div>
+          <div class="counter-label">AUTHENTICATED</div>
         </div>
         <div class="counter-item">
-          <div class="counter-num" id="cnt-thermal" style="color:var(--yellow)">—</div>
-          <div class="counter-label">Thermal Alerts</div>
+          <div class="counter-num" id="cnt-score" style="color:var(--yellow)">—</div>
+          <div class="counter-label">CURRENT THREAT LEVEL</div>
         </div>
       </div>
     </div>
 
-    <!-- Device trust gauges -->
-    <div class="card card-wide">
-      <h2>📡 Node Trust Scores</h2>
+    <div class="card col-4">
+      <h2>📷 Perimeter Edge Node (ESP32-CAM)</h2>
+      <div class="camera-container">
+        <!-- Defaults to a specific device ID you flash, e.g. ESP32_CAM_PERIMETER -->
+        <img id="live-cam" src="/api/photo/ESP32_CAM_PERIMETER" onerror="this.src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='" alt="Live Camera Feed">
+        <div class="rec-indicator"><div class="dot" style="background:var(--red);box-shadow:none;width:6px;height:6px"></div> LIVE</div>
+        <div class="camera-overlay">
+          <span>RGB CHALLENGE: ARMED</span>
+          <span id="cam-time">00:00:00</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MIDDLE ROW: Arduino Sensors & Node Trust -->
+    <div class="card col-4">
+      <h2>🔥 Physical Watchdog (Arduino Uno)</h2>
+      <div class="sensor-grid">
+        <div class="sensor-card safe" id="card-vib">
+          <div>
+            <div class="sensor-label">Case Vibration (SW-420)</div>
+            <div style="font-size:0.8rem;color:var(--muted);margin-top:4px" id="vib-status">Monitoring...</div>
+          </div>
+          <div class="sensor-value" id="val-vib" style="color:var(--green)">SAFE</div>
+        </div>
+        <div class="sensor-card safe" id="card-temp">
+          <div>
+            <div class="sensor-label">Room Ambient (DHT22)</div>
+            <div style="font-size:0.8rem;color:var(--muted);margin-top:4px">Humidity: <span id="val-hum">—</span>%</div>
+          </div>
+          <div class="sensor-value" id="val-temp" style="color:var(--cyan)">—°C</div>
+        </div>
+        <div class="sensor-card safe" id="card-kill">
+          <div>
+            <div class="sensor-label">Hardware Kill-Switch</div>
+            <div style="font-size:0.8rem;color:var(--muted);margin-top:4px">Pin 7 Relay Status</div>
+          </div>
+          <div class="sensor-value" id="val-kill" style="color:var(--green)">ARMED</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card col-8">
+      <h2>📡 Network Fingerprinting (MAC Spoof Defense)</h2>
       <div class="device-list" id="device-list">
-        <p style="color:var(--muted);font-size:.8rem">Loading device data…</p>
+        <p style="color:var(--muted);font-size:.8rem;padding:1rem">Awaiting neural network inference…</p>
       </div>
     </div>
 
-    <!-- Live event feed -->
-    <div class="card card-full">
-      <h2>🔴 Live Security Feed</h2>
+    <!-- BOTTOM ROW: Logs -->
+    <div class="card col-6">
+      <h2>🔴 Live Security Event Feed</h2>
       <div class="feed" id="event-feed">
-        <p style="color:var(--muted);font-size:.8rem">Waiting for events…</p>
+        <p style="color:var(--muted);font-size:.8rem;padding:1rem">Waiting for events…</p>
       </div>
     </div>
 
-    <!-- Forensic evidence log -->
-    <div class="card card-full">
-      <h2>⛓️ Forensic Evidence Log (Blockchain-Ready)</h2>
-      <div style="overflow-x:auto">
+    <div class="card col-6">
+      <h2>⛓️ Forensic Blockchain Ledger (Ganache)</h2>
+      <div class="table-container">
         <table class="evidence-table">
           <thead>
             <tr>
               <th>Time</th>
               <th>Device</th>
               <th>Result</th>
-              <th>Trust Score</th>
               <th>Reason</th>
-              <th>SHA-256 Hash</th>
-              <th>On-Chain TX</th>
+              <th>SHA-256 Signature</th>
             </tr>
           </thead>
           <tbody id="evidence-tbody">
-            <tr><td colspan="7" style="color:var(--muted)">Loading…</td></tr>
+            <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:2rem">Loading blockchain data…</td></tr>
           </tbody>
         </table>
       </div>
     </div>
-  </main>
 
-  <footer>Auto-refreshes every 3 s &nbsp;|&nbsp; Zero-Trust IoT Security Gateway &nbsp;|&nbsp; Hardware-to-Patent</footer>
+    <footer>
+      Zero-Trust IoT Security Architecture &nbsp;|&nbsp; 
+      Hardware-to-Patent Implementation &nbsp;|&nbsp; 
+      Auto-refreshing Dashboard
+    </footer>
+  </main>
 
   <script>
     // ── Clock ──
     function tick() {
-      document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+      const now = new Date();
+      document.getElementById('clock').textContent = now.toLocaleTimeString();
+      document.getElementById('cam-time').textContent = now.toLocaleTimeString('en-US', {hour12:false}) + '.' + String(now.getMilliseconds()).padStart(3,'0');
     }
-    setInterval(tick, 1000); tick();
+    setInterval(tick, 50);
+
+    // ── Camera Polling ──
+    // Appends timestamp to bypass browser cache
+    setInterval(() => {
+      const img = document.getElementById('live-cam');
+      img.src = '/api/photo/ESP32_CAM_PERIMETER?t=' + new Date().getTime();
+    }, 2000); // refresh every 2 seconds
 
     // ── Helpers ──
-    function fmt(ts) {
-      return new Date(ts * 1000).toLocaleTimeString();
-    }
+    function fmt(ts) { return new Date(ts * 1000).toLocaleTimeString(); }
     function trustColor(score) {
-      if (score >= 75) return 'var(--green)';
+      if (score >= 80) return 'var(--green)';
       if (score >= 50) return 'var(--yellow)';
       return 'var(--red)';
     }
@@ -345,10 +500,75 @@ DASHBOARD_HTML = """
       if (result === 'AUTHENTICATED') return 'badge-auth';
       if (result === 'REJECTED')      return 'badge-reject';
       if (result === 'EMERGENCY_THERMAL') return 'badge-therm';
+      if (result === 'PHYSICAL_TAMPER') return 'badge-tamper';
       return 'badge-warn';
     }
-    function truncHash(h) {
-      return h ? h.substring(0, 14) + '…' : '—';
+    function truncHash(h) { return h ? h.substring(0, 16) + '…' : '—'; }
+
+    // ── Threat Radar & Sensors ──
+    async function refreshSensors() {
+      try {
+        // Fetch Arduino environmental data
+        const rEnv = await fetch('/api/environment');
+        const env = await rEnv.json();
+        if (env.temperature != null) {
+          document.getElementById('val-temp').textContent = env.temperature.toFixed(1) + '°C';
+          document.getElementById('val-hum').textContent = env.humidity.toFixed(1);
+        }
+
+        // Fetch overall Threat Score
+        const rThreat = await fetch('/api/threat_level');
+        const threat = await rThreat.json();
+        document.getElementById('cnt-score').textContent = threat.threat_score + '%';
+        
+        const pill = document.getElementById('threat-pill');
+        const status = document.getElementById('threat-status');
+        const dot = document.getElementById('threat-dot');
+        const vibCard = document.getElementById('card-vib');
+        const valVib = document.getElementById('val-vib');
+        const valKill = document.getElementById('val-kill');
+        const cardKill = document.getElementById('card-kill');
+
+        if (threat.color === 'RED') {
+          pill.style.borderColor = 'var(--red)';
+          status.style.color = 'var(--red)';
+          status.textContent = 'SYSTEM LOCKDOWN';
+          dot.style.background = 'var(--red)';
+          document.getElementById('cnt-score').style.color = 'var(--red)';
+          
+          if (threat.alerts && threat.alerts.includes('PHYSICAL_TAMPER')) {
+             vibCard.className = 'sensor-card alert';
+             valVib.textContent = 'TAMPER!';
+             valVib.style.color = 'var(--red)';
+             document.getElementById('vib-status').textContent = 'VIBRATION DETECTED';
+             
+             cardKill.className = 'sensor-card alert';
+             valKill.textContent = 'POWER CUT';
+             valKill.style.color = 'var(--red)';
+          }
+        } else if (threat.color === 'ORANGE' || threat.color === 'YELLOW') {
+          pill.style.borderColor = 'var(--yellow)';
+          status.style.color = 'var(--yellow)';
+          status.textContent = 'ELEVATED RISK';
+          dot.style.background = 'var(--yellow)';
+          document.getElementById('cnt-score').style.color = 'var(--yellow)';
+        } else {
+          pill.style.borderColor = 'var(--border)';
+          status.style.color = 'var(--text)';
+          status.textContent = 'SYSTEM SECURE';
+          dot.style.background = 'var(--green)';
+          document.getElementById('cnt-score').style.color = 'var(--green)';
+          
+          vibCard.className = 'sensor-card safe';
+          valVib.textContent = 'SAFE';
+          valVib.style.color = 'var(--green)';
+          document.getElementById('vib-status').textContent = 'Monitoring...';
+          
+          cardKill.className = 'sensor-card safe';
+          valKill.textContent = 'ARMED';
+          valKill.style.color = 'var(--green)';
+        }
+      } catch(e) { console.error(e); }
     }
 
     // ── Device gauges ──
@@ -357,33 +577,30 @@ DASHBOARD_HTML = """
         const r = await fetch('/api/devices');
         const devices = await r.json();
         const el = document.getElementById('device-list');
-        if (!devices.length) {
-          el.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No devices seen yet.</p>';
-          return;
-        }
+        if (!devices.length) return;
+        
         el.innerHTML = devices.map(d => {
           const score = Math.max(0, Math.min(100, d.trust_score));
           const color = trustColor(score);
           const status = d.status || 'UNKNOWN';
+          const shadow = score < 50 ? `box-shadow: 0 0 15px ${color}` : '';
           return `
-            <div class="device-row">
+            <div class="device-row" style="border-left: 4px solid ${color}; ${shadow}">
               <div class="device-meta">
                 <span class="device-id">${d.device_id}</span>
-                <span style="color:${color};font-weight:600">${score.toFixed(1)} / 100</span>
+                <span style="color:${color};font-weight:700;font-size:1rem">${score.toFixed(1)}%</span>
               </div>
               <div class="trust-bar">
                 <div class="trust-fill" style="width:${score}%;background:${color}"></div>
               </div>
-              <div style="font-size:.68rem;color:var(--muted)">
-                Status: <span style="color:${color}">${status}</span>
-                &nbsp;· IPD: ${d.last_ipd ?? '—'}ms
-                &nbsp;· RSSI: ${d.last_rssi ?? '—'}dBm
-                &nbsp;· Last seen: ${d.last_seen ? fmt(d.last_seen) : '—'}
+              <div style="font-size:.75rem;color:var(--muted);display:flex;justify-content:space-between">
+                <span>Network Jitter (IPD): <span style="color:var(--text)">${d.last_ipd ? d.last_ipd.toFixed(3) : '—'}s</span></span>
+                <span>Signal: <span style="color:var(--text)">${d.last_rssi ?? '—'} dBm</span></span>
               </div>
             </div>
           `;
         }).join('');
-      } catch(e) { console.error('Device refresh failed', e); }
+      } catch(e) {}
     }
 
     // ── Counters + Feed ──
@@ -395,24 +612,21 @@ DASHBOARD_HTML = """
         document.getElementById('cnt-total').textContent    = data.total;
         document.getElementById('cnt-rejected').textContent = data.rejected;
         document.getElementById('cnt-auth').textContent     = data.authenticated;
-        document.getElementById('cnt-thermal').textContent  = data.thermal;
 
         const feed = document.getElementById('event-feed');
-        if (!data.events.length) {
-          feed.innerHTML = '<p style="color:var(--muted);font-size:.8rem">No events yet.</p>';
-          return;
-        }
+        if (!data.events.length) return;
+        
         feed.innerHTML = data.events.map(e => `
           <div class="event-row">
             <span class="event-badge ${badgeClass(e.result)}">${e.result}</span>
             <div style="flex:1;min-width:0">
               <div class="event-device">${e.device_id}</div>
-              <div class="event-reason">${e.reason || '—'}</div>
+              <div class="event-reason">${e.reason || 'Hardware Profile Verified'}</div>
             </div>
             <span class="event-time">${fmt(e.timestamp)}</span>
           </div>
         `).join('');
-      } catch(e) { console.error('Feed refresh failed', e); }
+      } catch(e) {}
     }
 
     // ── Evidence table ──
@@ -421,36 +635,33 @@ DASHBOARD_HTML = """
         const r = await fetch('/api/evidence?limit=20');
         const rows = await r.json();
         const tbody = document.getElementById('evidence-tbody');
-        if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">No evidence logged yet.</td></tr>';
-          return;
-        }
+        if (!rows.length) return;
+        
         tbody.innerHTML = rows.map(row => {
           const color = row.result === 'AUTHENTICATED' ? 'var(--green)' :
                         row.result === 'REJECTED'      ? 'var(--red)' : 'var(--yellow)';
           return `
             <tr>
-              <td>${fmt(row.timestamp)}</td>
-              <td class="device-id">${row.device_id}</td>
+              <td style="color:var(--muted)">${fmt(row.timestamp)}</td>
+              <td class="device-id" style="color:var(--cyan)">${row.device_id}</td>
               <td style="color:${color};font-weight:600">${row.result}</td>
-              <td>${row.trust_score != null ? row.trust_score.toFixed(1) : '—'}</td>
-              <td style="color:var(--muted)">${row.reason || '—'}</td>
-              <td class="hash" title="${row.event_hash}">${truncHash(row.event_hash)}</td>
-              <td class="hash">${row.on_chain_tx ? truncHash(row.on_chain_tx) : '<span style=color:var(--muted)>Pending</span>'}</td>
+              <td style="color:var(--muted);max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${row.reason || ''}">${row.reason || '—'}</td>
+              <td><span class="hash" title="${row.event_hash}">${truncHash(row.event_hash)}</span></td>
             </tr>
           `;
         }).join('');
-      } catch(e) { console.error('Evidence refresh failed', e); }
+      } catch(e) {}
     }
 
     function refreshAll() {
+      refreshSensors();
       refreshDevices();
       refreshFeed();
       refreshEvidence();
     }
 
     refreshAll();
-    setInterval(refreshAll, 3000);
+    setInterval(refreshAll, 2500); // Fast refresh for live demo
   </script>
 </body>
 </html>

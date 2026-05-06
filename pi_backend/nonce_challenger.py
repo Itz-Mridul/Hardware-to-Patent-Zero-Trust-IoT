@@ -54,6 +54,7 @@ DB_PATH = os.environ.get("IOT_DB_PATH", os.path.join(_BASE_DIR, "security.db"))
 
 # Active pending challenges: {device_id: {nonce, sent_at, expected}}
 pending: dict = {}
+pending_lock = threading.Lock()
 
 
 def expected_solution(nonce: int) -> int:
@@ -68,16 +69,29 @@ def expected_solution(nonce: int) -> int:
     return 1000 - remainder
 
 
+def _purge_stale_pending() -> None:
+    """Remove challenges that were never answered (prevent memory leak §2.4)."""
+    now = time.time()
+    with pending_lock:
+        stale = [dev for dev, p in pending.items()
+                 if now - p["sent_at"] > CHALLENGE_TIMEOUT_S * 3]
+        for dev in stale:
+            del pending[dev]
+            log.debug(f"Purged stale pending nonce for {dev}")
+
+
 def issue_challenge(client, device_id: str) -> None:
     """Issue a unique nonce challenge to a specific device."""
+    _purge_stale_pending()  # Clean up stale entries first (§2.4 memory leak fix)
     seed = int(time.time() * 1000) ^ random.randint(0, 0xFFFF)
     nonce = seed % 1000000
 
-    pending[device_id] = {
-        "nonce": nonce,
-        "sent_at": time.time(),
-        "expected": expected_solution(nonce),
-    }
+    with pending_lock:
+        pending[device_id] = {
+            "nonce": nonce,
+            "sent_at": time.time(),
+            "expected": expected_solution(nonce),
+        }
 
     payload = json.dumps({
         "device_id": device_id,
@@ -98,10 +112,10 @@ def _verify_response(data: dict) -> tuple[str, str]:
     solution = data.get("solution", -1)
     solve_us = data.get("solve_time_us", 0)
 
-    if dev not in pending:
-        return "REJECTED", f"Unsolicited nonce response from {dev}"
-
-    p = pending.pop(dev)
+    with pending_lock:
+        if dev not in pending:
+            return "REJECTED", f"Unsolicited nonce response from {dev}"
+        p = pending.pop(dev)
     elapsed = time.time() - p["sent_at"]
 
     if elapsed > CHALLENGE_TIMEOUT_S:
