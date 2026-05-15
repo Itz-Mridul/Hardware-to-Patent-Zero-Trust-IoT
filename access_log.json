@@ -1,0 +1,560 @@
+[
+  {
+    "timestamp": "2026-05-13T18:50:18.780121",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "HMAC_MISMATCH",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-13T18:50:29.083472",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "HMAC_MISMATCH",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-13T18:50:41.184526",
+    "uid": "B2A3FB9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "HMAC_MISMATCH",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:41:06.528725",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "DENY",
+    "reason": "NAME_MISMATCH+CODE_MISMATCH",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:41:30.996547",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "NAME_MISMATCH+GENDER_MISMATCH+CODE_MISMATCH",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:41:40.256166",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:42:18.740728",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:42:41.993938",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "NAME_MISMATCH+GENDER_MISMATCH+CODE_MISMATCH",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:43:07.130718",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:48:48.323125",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "NAME_MISMATCH+GENDER_MISMATCH+CODE_MISMATCH",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:51:12.026004",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "DENY",
+    "reason": "NAME_MISMATCH+CODE_MISMATCH",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:51:16.156455",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T01:51:43.367653",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:00:40.698511",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:00:43.723139",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:03:00.334243",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:03:03.583226",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:03:09.753920",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:03:12.914175",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:03:16.292902",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:03:20.522792",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:11:14.442292",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:11:27.078726",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:11:39.619864",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:11:42.749014",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:11:45.767679",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:11:49.379700",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:21:58.109429",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:22:25.098698",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:22:39.999170",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:22:58.101705",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:23:55.824203",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:24:45.859655",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:24:48.868290",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:24:51.868199",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:24:55.070616",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:25:17.285063",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:25:23.628431",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:25:35.713077",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:25:38.725797",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:25:47.711122",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:25:50.762218",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:25:53.721088",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:26:02.675834",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:34:27.731260",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:34:33.674690",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:37:22.660788",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:37:26.810890",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:37:29.728857",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:38:00.757173",
+    "uid": "A399422D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:38:12.232657",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:41:16.587758",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:41:24.724256",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:41:38.344649",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:41:52.150304",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:50:52.526281",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:51:24.962858",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:51:31.759255",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:51:47.599295",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:51:54.002607",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T02:52:00.091897",
+    "uid": "C2BCFF9D",
+    "name": "",
+    "gender": "",
+    "decision": "DENY",
+    "reason": "UID_NOT_REGISTERED",
+    "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-14T03:19:27.599458",
+    "uid": "B2A3FB9D",
+    "name": "Mridul",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
+  }
+]

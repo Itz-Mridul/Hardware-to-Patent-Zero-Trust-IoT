@@ -44,6 +44,9 @@ import time
 import json
 from typing import Optional
 
+# Add project root to path so we can import from pi_backend directly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 # ── GPIO abstraction ────────────────────────────────────────────────────────
 _GPIO_AVAILABLE = False
 GPIO = None

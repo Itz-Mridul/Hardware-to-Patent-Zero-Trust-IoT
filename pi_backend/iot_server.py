@@ -23,8 +23,12 @@ import hmac as hmac_lib
 import json
 import os
 import sqlite3
+import sys
 import threading
 import time
+
+# Add project root to path so we can import from pi_backend directly
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 try:
     import requests as _requests
@@ -93,6 +97,9 @@ DB_PATH    = os.path.join(BASE_DIR, "security.db")
 # Resolve project root (one level up from pi_backend/)
 _PROJECT_ROOT = os.path.dirname(BASE_DIR)
 
+from dotenv import load_dotenv
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+
 MQTT_BROKER = os.environ.get("MQTT_BROKER", "localhost")
 MQTT_PORT   = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_STATUS_TOPIC       = os.environ.get("MQTT_STATUS_TOPIC",       "mailbox/status")
@@ -111,7 +118,7 @@ MIN_TRUST_SCORE  = float(os.environ.get("MIN_TRUST_SCORE",  "0"))
 EXPECTED_IPD_MS  = int(os.environ.get("EXPECTED_IPD_MS",   "5000"))
 
 # ── Access-control config ─────────────────────────────────────────────────────
-HMAC_SECRET_KEY   = os.environ.get("HMAC_SECRET_KEY",   "CHANGE_ME_TO_32_BYTE_SECRET_KEY!").encode()
+HMAC_SECRET_KEY   = os.environ.get("HMAC_SECRET_KEY",   "b3962f909a1507407466c4c962711d6d6f8ed9c98064e56592f31a13d6b035b9").encode()
 TELEGRAM_TOKEN    = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID  = os.environ.get("TELEGRAM_CHAT_ID",  "")
 NONCE_EXPIRY_SEC  = 60
@@ -125,6 +132,7 @@ os.makedirs(PHOTO_DIR, exist_ok=True)
 # ── Access-control runtime state ──────────────────────────────────────────────
 _used_nonces    = {}   # {nonce_int: timestamp_float}
 _pending_photos = {}   # {uid_str: bytes}  — buffered until payload arrives
+_pending_deny   = {}   # {uid_str: dict}   — awaiting photo before final log+alert
 
 
 def clamp(value, lower=MIN_TRUST_SCORE, upper=MAX_TRUST_SCORE):
@@ -283,16 +291,42 @@ def _grant(mqtt_client, uid: str, name: str, gender: str):
 
 def _deny(mqtt_client, uid: str, name: str,
           gender: str, secret_code: str, reason: str):
-    ts         = datetime.datetime.now().isoformat()
-    photo_path = ""
-    if uid in _pending_photos:
-        photo_path = _save_photo(uid, _pending_photos.pop(uid))
+    ts = datetime.datetime.now().isoformat()
+
+    # 1. Send DENY decision to ESP32 immediately (fast response)
     decision_payload = json.dumps(
         {"decision": "DENY", "uid": uid, "reason": reason, "timestamp": ts})
     mqtt_client.publish(MQTT_DECISION_TOPIC, decision_payload)
-    _log_access(uid, name, gender, "DENY", reason, photo_path)
-    _send_telegram_deny(name, uid, gender, secret_code, reason, photo_path)
-    print(f"\n ❌ DENIED  → {name} ({uid}) | {reason}\n")
+
+    # 2. Trigger ESP32-CAM to capture intruder photo (non-blocking)
+    photo_request = json.dumps({"uid": uid, "reason": reason, "timestamp": ts})
+    mqtt_client.publish("mailbox/photo_request", photo_request)
+    print(f" [ \U0001f4f8 CAM ] Photo request sent for UID: {uid}")
+
+    # 3. Store deny context so photo handler can complete logging + Telegram
+    _pending_deny[uid] = {
+        "name": name, "gender": gender,
+        "secret_code": secret_code, "reason": reason, "ts": ts
+    }
+
+    # 4. Fallback thread: if no photo arrives in 5s, log and alert without it
+    def _fallback():
+        import time as _t
+        _t.sleep(5)
+        if uid not in _pending_deny:
+            return   # photo already handled
+        deny_info = _pending_deny.pop(uid)
+        photo_path = ""
+        if uid in _pending_photos:
+            photo_path = _save_photo(uid, _pending_photos.pop(uid))
+        _log_access(uid, deny_info["name"], deny_info["gender"],
+                    "DENY", deny_info["reason"], photo_path)
+        _send_telegram_deny(deny_info["name"], uid, deny_info["gender"],
+                            deny_info["secret_code"], deny_info["reason"], photo_path)
+        print(f" [ \u23f0 ] Deny fallback complete for {uid} (no camera photo)")
+
+    threading.Thread(target=_fallback, daemon=True).start()
+    print(f"\n \u274c DENIED  \u2192 {name} ({uid}) | {reason}\n")
 
 
 def process_access_payload(data: dict, mqtt_client):
@@ -1018,7 +1052,7 @@ def on_mqtt_connect(client, userdata, flags, reason_code, properties=None):
             (MQTT_STATUS_TOPIC,       1),
             (MQTT_HEARTBEAT_TOPIC,    1),
             (MQTT_ENVIRONMENT_TOPIC,  0),
-            (f"{MQTT_PHOTO_PREFIX}+", 0),
+            (f"{MQTT_PHOTO_PREFIX}+/+", 0),  # burst: mailbox/photo/<uid>/<index>
             (MQTT_ACCESS_TOPIC,       1),   # card-tap payloads from ESP32
             (MQTT_NONCE_RESP_TOPIC,   0),   # anti-FPGA puzzle responses
         )
@@ -1077,10 +1111,40 @@ def on_mqtt_message(client, userdata, msg):
     elif msg.topic == MQTT_ENVIRONMENT_TOPIC:
         handle_environment_message(msg.topic, msg.payload)
     elif msg.topic.startswith(MQTT_PHOTO_PREFIX):
-        # Buffer raw photo bytes; saved when GRANT/DENY is issued
-        uid = msg.topic[len(MQTT_PHOTO_PREFIX):] or "unknown"
-        _pending_photos[uid] = bytes(msg.payload)
-        print(f" [ 📷 CAM ] Photo buffered for UID: {uid} ({len(msg.payload)} bytes)")
+        # Topic format: mailbox/photo/<uid>/<shot_index>
+        remainder  = msg.topic[len(MQTT_PHOTO_PREFIX):]   # "<uid>/<index>"
+        parts      = remainder.rsplit("/", 1)
+        uid        = parts[0] if parts else "unknown"
+        shot_index = int(parts[1]) if len(parts) == 2 and parts[1].isdigit() else 0
+        photo_bytes = bytes(msg.payload)
+
+        if photo_bytes == b"NOCAMERA":
+            print(f" [ \u26a0\ufe0f CAM ] No camera for UID: {uid}")
+        else:
+            print(f" [ \U0001f4f7 CAM ] Shot {shot_index} received for UID: {uid} ({len(photo_bytes)} bytes)")
+
+        if uid in _pending_deny:
+            deny_info  = _pending_deny[uid]
+            photo_path = _save_photo(uid + f"_shot{shot_index}", photo_bytes)
+
+            if shot_index == 0:
+                # First photo: complete the deny log + send Telegram
+                _pending_deny.pop(uid)
+                _log_access(uid, deny_info["name"], deny_info["gender"],
+                            "DENY", deny_info["reason"], photo_path)
+                _send_telegram_deny(deny_info["name"], uid, deny_info["gender"],
+                                    deny_info["secret_code"], deny_info["reason"], photo_path)
+                print(f" [ \U0001f4f8 ] Shot 0 saved + Telegram sent: {photo_path}")
+                # Re-register in recent_denies so shots 1-4 are also saved
+                _pending_deny[f"{uid}_burst"] = deny_info
+            else:
+                # Subsequent shots: just save to disk (appear in dashboard gallery)
+                _log_access(uid, deny_info.get("name", uid), deny_info.get("gender", ""),
+                            "DENY", f"BURST_SHOT_{shot_index}", photo_path)
+                print(f" [ \U0001f4f8 ] Shot {shot_index} saved: {photo_path}")
+        else:
+            # Buffer as heartbeat/device photo
+            _pending_photos[uid] = photo_bytes
     elif msg.topic == MQTT_ACCESS_TOPIC:
         handle_access_message(msg.topic, msg.payload, client)
     elif msg.topic == MQTT_NONCE_RESP_TOPIC:
