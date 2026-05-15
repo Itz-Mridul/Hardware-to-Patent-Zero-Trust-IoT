@@ -1,203 +1,84 @@
 import hashlib
 import json
 import os
+import time
 from web3 import Web3
 
 
 # ---------------- CONFIGURATION ----------------
 
-# Override via env vars when running on the Pi:
-#   export BLOCKCHAIN_URL="http://<MAC_IP>:7545"
-#   export CONTRACT_ADDRESS="0x..."
-BLOCKCHAIN_URL = os.environ.get("BLOCKCHAIN_URL", "http://127.0.0.1:7545")
+BLOCKCHAIN_URL = os.environ.get("BLOCKCHAIN_URL", "http://192.168.1.108:7545")
+CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "")
 
-CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "0x9D776C5513A171358F8D6241D3507B907D88B6B7")
-
-# Paste your contract ABI here.
+# ABI for SecurityRegistry (matching blockchain_bridge.py and SecurityRegistry.sol)
 ABI_JSON = '''
 [
-	{
-		"inputs": [],
-		"stateMutability": "nonpayable",
-		"type": "constructor"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "",
-				"type": "address"
-			}
-		],
-		"name": "devices",
-		"outputs": [
-			{
-				"internalType": "string",
-				"name": "name",
-				"type": "string"
-			},
-			{
-				"internalType": "bool",
-				"name": "isAuthorized",
-				"type": "bool"
-			},
-			{
-				"internalType": "uint256",
-				"name": "lastFingerprint",
-				"type": "uint256"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "_deviceAddr",
-				"type": "address"
-			}
-		],
-		"name": "isAllowed",
-		"outputs": [
-			{
-				"internalType": "bool",
-				"name": "",
-				"type": "bool"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [],
-		"name": "owner",
-		"outputs": [
-			{
-				"internalType": "address",
-				"name": "",
-				"type": "address"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "_deviceAddr",
-				"type": "address"
-			},
-			{
-				"internalType": "string",
-				"name": "_name",
-				"type": "string"
-			},
-			{
-				"internalType": "uint256",
-				"name": "_fingerprint",
-				"type": "uint256"
-			}
-		],
-		"name": "registerDevice",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	}
+    {
+        "inputs": [
+            {"name": "deviceId", "type": "string"},
+            {"name": "eventType", "type": "string"},
+            {"name": "dataHash", "type": "string"},
+            {"name": "timestamp", "type": "uint256"}
+        ],
+        "name": "logEvent",
+        "outputs": [{"type": "uint256"}],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [],
+        "name": "getTotalEvents",
+        "outputs": [{"type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
 ]
-
 '''
-
 
 # ---------------- SETUP ----------------
 
 w3 = Web3(Web3.HTTPProvider(BLOCKCHAIN_URL))
 
-
 def connect_to_blockchain():
     if not w3.is_connected():
-        raise ConnectionError(
-            "Connection failed. Make sure Ganache is running and the IP/port are correct."
-        )
-
-    print("Successfully connected to Ganache Blockchain.")
-    print(f"Connected to: {BLOCKCHAIN_URL}")
-
+        raise ConnectionError(f"Connection failed to {BLOCKCHAIN_URL}")
 
 def load_contract():
-    try:
-        abi = json.loads(ABI_JSON)
-    except json.JSONDecodeError as exc:
-        raise ValueError("Invalid ABI JSON. Paste the full contract ABI into ABI_JSON.") from exc
-
-    checksum_address = Web3.to_checksum_address(CONTRACT_ADDRESS)
-
-    return w3.eth.contract(
-        address=checksum_address,
-        abi=abi,
-    )
-
+    if not CONTRACT_ADDRESS:
+        raise ValueError("CONTRACT_ADDRESS not set in environment.")
+    abi = json.loads(ABI_JSON)
+    return w3.eth.contract(address=Web3.to_checksum_address(CONTRACT_ADDRESS), abi=abi)
 
 # ---------------- BLOCKCHAIN FUNCTION ----------------
 
-def register_event_on_chain(device_name, fingerprint_score):
+def register_event_on_chain(device_name, event_hash, event_type="SECURITY_EVENT"):
     """
-    Logs a security event permanently to the blockchain.
-    Calls Solidity function:
-
-        registerDevice(address device, string memory name, uint score)
+    Logs a security event to the SecurityRegistry contract.
     """
-
     try:
         connect_to_blockchain()
         contract = load_contract()
-
         accounts = w3.eth.accounts
-
         if not accounts:
-            raise RuntimeError("No Ganache accounts found.")
-
-        sender_account = accounts[0]
-
-        print(f"Locking event for {device_name} on-chain...")
-
-        tx_hash = contract.functions.registerDevice(
-            sender_account,
+            raise RuntimeError("No accounts found.")
+        
+        sender = accounts[0]
+        
+        # logEvent(deviceId, eventType, dataHash, timestamp)
+        tx_hash = contract.functions.logEvent(
             device_name,
-            int(fingerprint_score),
-        ).transact({
-            "from": sender_account,
-        })
-
+            event_type,
+            str(event_hash),
+            int(time.time())
+        ).transact({"from": sender})
+        
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        print("Evidence secured on blockchain.")
-        print(f"Block Number: {receipt.blockNumber}")
-        print(f"Transaction Hash: {tx_hash.hex()}")
-
+        print(f"[BLOCKCHAIN] Event secured: {tx_hash.hex()}")
         return receipt
-
-    except Exception as error:
-        print(f"Blockchain Error: {error}")
+    except Exception as e:
+        print(f"[BLOCKCHAIN] Error: {e}")
         return None
 
-
-def hash_event(event_text):
-    """Create a stable numeric fingerprint for a security event."""
-    digest = hashlib.sha256(str(event_text).encode("utf-8")).hexdigest()
-    return int(digest[:12], 16)
-
-
-def send_to_blockchain(event_name, fingerprint_score=None):
-    """Compatibility wrapper for gateway scripts."""
-    if fingerprint_score is None:
-        fingerprint_score = hash_event(event_name)
-
-    return register_event_on_chain(event_name, fingerprint_score)
-
-
-# ---------------- TEST ----------------
-
-if __name__ == "__main__":
-    register_event_on_chain("ESP32_GATEWAY", 100)
+def send_to_blockchain(device_id, fingerprint_score):
+    """Compatibility wrapper for forensic_logger."""
+    return register_event_on_chain(device_id, fingerprint_score, "ACCESS_ATTEMPT")

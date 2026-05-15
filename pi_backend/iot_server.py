@@ -628,22 +628,27 @@ def score_heartbeat(inter_packet_delay, rssi):
     except (TypeError, ValueError):
         signal = -100
 
-    perfect_window_low = EXPECTED_IPD_MS - 500
-    perfect_window_high = EXPECTED_IPD_MS + 500
+    # Thresholds relative to EXPECTED_IPD_MS — works at any heartbeat rate
+    too_fast    = EXPECTED_IPD_MS * 0.30   # < 30%  of expected → suspicious
+    slightly_fast = EXPECTED_IPD_MS * 0.75  # < 75%  → slightly fast
+    perfect_low = EXPECTED_IPD_MS * 0.85   # 85%-115% = perfect window
+    perfect_high = EXPECTED_IPD_MS * 1.15
+    slightly_late = EXPECTED_IPD_MS * 2.0  # < 200% → delayed
+    very_late   = EXPECTED_IPD_MS * 3.0    # > 300% → very late
 
-    if ipd < 1000:
+    if ipd < too_fast:
         penalty = -40.0 if signal >= -60 else -30.0
-        return penalty, "REJECTED", "Timing far too fast for a normal heartbeat"
+        return penalty, "REJECTED", "Timing far too fast — possible replay/spoof"
 
-    if ipd < 4000:
+    if ipd < slightly_fast:
         if signal <= -75:
             return -5.0, "WARNING", "Early packet softened by weak RSSI"
         return -25.0, "WARNING", "Early packet is spoofing-like"
 
-    if perfect_window_low <= ipd <= perfect_window_high:
+    if perfect_low <= ipd <= perfect_high:
         return 5.0, "AUTHENTICATED", "Heartbeat matches the expected cadence"
 
-    if ipd <= 9000:
+    if ipd <= slightly_late:
         if signal <= -75:
             return 0.0, "AUTHENTICATED", "Delayed packet forgiven because RSSI is weak"
         return -10.0, "WARNING", "Delayed packet on a strong link"

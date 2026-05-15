@@ -556,5 +556,14 @@
     "decision": "GRANT",
     "reason": "ALL_OK",
     "photo_path": ""
+  },
+  {
+    "timestamp": "2026-05-16T05:18:09.458993",
+    "uid": "0205CA06",
+    "name": "Onkar",
+    "gender": "M",
+    "decision": "GRANT",
+    "reason": "ALL_OK",
+    "photo_path": ""
   }
 ]
