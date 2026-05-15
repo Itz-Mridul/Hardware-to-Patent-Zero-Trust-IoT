@@ -4,7 +4,7 @@ from web3 import Web3
 print("\n--- 🚀 Initializing Blockchain Gatekeeper 🚀 ---")
 
 # 1. Connect to Ganache (override via: export BLOCKCHAIN_URL="http://<MAC_IP>:7545")
-w3 = Web3(Web3.HTTPProvider(os.environ.get("BLOCKCHAIN_URL", "http://127.0.0.1:7545")))
+w3 = Web3(Web3.HTTPProvider(os.environ.get("BLOCKCHAIN_URL", "http://192.168.1.102:7545")))
 
 if not w3.is_connected():
     print("❌ Error: Could not connect to Ganache. Is the app open and running on port 7545?")

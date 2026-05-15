@@ -350,6 +350,45 @@ DASHBOARD_HTML = """
       border-top: 1px solid var(--border);
       margin-top: 2rem;
     }
+
+    /* ── INTRUDER ALERT GALLERY ── */
+    .intruder-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 1rem;
+      max-height: 340px;
+      overflow-y: auto;
+    }
+    .intruder-card {
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      animation: fadeIn .4s ease;
+    }
+    .intruder-card img {
+      width: 100%;
+      aspect-ratio: 4/3;
+      object-fit: cover;
+      background: #111;
+    }
+    .intruder-meta {
+      padding: .5rem;
+      font-size: .65rem;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+      line-height: 1.4;
+    }
+    .intruder-meta .uid { color: var(--red); font-weight: 700; }
+    .no-intruders {
+      color: var(--green);
+      font-size: .85rem;
+      padding: 2rem;
+      text-align: center;
+      opacity: .7;
+    }
   </style>
 </head>
 <body>
@@ -463,6 +502,14 @@ DASHBOARD_HTML = """
             <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:2rem">Loading blockchain data…</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- INTRUDER ALERT PANEL -->
+    <div class="card col-12">
+      <h2>🚨 Intruder Alert — Denied Access Photos</h2>
+      <div class="intruder-grid" id="intruder-grid">
+        <div class="no-intruders">✅ No denied access attempts recorded.</div>
       </div>
     </div>
 
@@ -653,11 +700,37 @@ DASHBOARD_HTML = """
       } catch(e) {}
     }
 
+    // ── Intruder photo gallery ──
+    async function refreshIntruders() {
+      try {
+        const r = await fetch('/api/deny_photos?limit=12');
+        const photos = await r.json();
+        const grid = document.getElementById('intruder-grid');
+        if (!photos.length) {
+          grid.innerHTML = '<div class="no-intruders">✅ No denied access attempts recorded.</div>';
+          return;
+        }
+        grid.innerHTML = photos.map(p => `
+          <div class="intruder-card">
+            <img src="/api/deny_photo_img?path=${encodeURIComponent(p.photo_path)}"
+                 onerror="this.style.display='none'" alt="Intruder">
+            <div class="intruder-meta">
+              <div class="uid">🆔 ${p.uid}</div>
+              <div>👤 ${p.name || 'UNKNOWN'}</div>
+              <div>❌ ${p.reason}</div>
+              <div style="margin-top:4px;color:var(--muted)">${new Date(p.timestamp).toLocaleString()}</div>
+            </div>
+          </div>
+        `).join('');
+      } catch(e) {}
+    }
+
     function refreshAll() {
       refreshSensors();
       refreshDevices();
       refreshFeed();
       refreshEvidence();
+      refreshIntruders();
     }
 
     refreshAll();
@@ -935,6 +1008,47 @@ def api_clock():
         return jsonify(report)
     except Exception as exc:
         return jsonify({"error": str(exc)})
+
+
+@app.route("/api/deny_photos")
+def api_deny_photos():
+    """
+    Returns the most recent DENY entries from access_log.json that have
+    a saved photo, newest first. Used by the Intruder Alert gallery panel.
+    """
+    from flask import request as req
+    limit = int(req.args.get("limit", 12))
+    log_file = os.path.join(os.path.dirname(_BASE_DIR), "access_log.json")
+    try:
+        with open(log_file) as f:
+            log = json.load(f)
+    except Exception:
+        return jsonify([])
+
+    denied = [
+        e for e in log
+        if e.get("decision") == "DENY" and e.get("photo_path")
+    ]
+    denied.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+    return jsonify(denied[:limit])
+
+
+@app.route("/api/deny_photo_img")
+def api_deny_photo_img():
+    """
+    Serves a saved intruder JPEG by its absolute path.
+    The path must be inside the project photos/ directory (security check).
+    """
+    from flask import request as req, abort, send_file
+    raw_path = req.args.get("path", "")
+    photos_dir = os.path.join(os.path.dirname(_BASE_DIR), "photos")
+    abs_path   = os.path.realpath(raw_path)
+    # Security: only serve files that live inside the photos/ folder
+    if not abs_path.startswith(os.path.realpath(photos_dir)):
+        abort(403)
+    if not os.path.isfile(abs_path):
+        abort(404)
+    return send_file(abs_path, mimetype="image/jpeg")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
