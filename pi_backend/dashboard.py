@@ -17,8 +17,10 @@ Then open http://localhost:5001 in your browser.
 
 import json
 import os
+import queue
 import sqlite3
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -38,13 +40,49 @@ from pi_backend.thermal_monitor import get_thermal_alerts
 # Photo storage: latest JPEG per device (populated by MQTT photo handler)
 _latest_photos: dict = {}   # {device_id: bytes}
 
+# ── SSE real-time event bus ──────────────────────────────────────────────────
+# Each connected browser gets its own queue. push_sse_event() fans out to all.
+_sse_listeners: list = []
+_sse_lock = threading.Lock()
+
+# Latest card-tap state (updated on every mailbox/access event)
+_last_tap: dict = {}
+
+
+def push_sse_event(event_type: str, data: dict) -> None:
+    """Fan-out an SSE event to every connected browser tab."""
+    payload = json.dumps({"type": event_type, "data": data})
+    with _sse_lock:
+        dead = []
+        for q in _sse_listeners:
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            _sse_listeners.remove(q)
+
+
 def store_device_photo(device_id: str, jpeg_bytes: bytes) -> None:
     """Called by the MQTT handler when a photo payload arrives."""
     _latest_photos[device_id] = jpeg_bytes
     persist_device_photo(device_id, jpeg_bytes)
+    push_sse_event("photo", {"device_id": device_id})
+
+
+def notify_card_tap(tap_data: dict) -> None:
+    """Called by iot_server when a card-tap result is ready. Updates hero panel."""
+    global _last_tap
+    _last_tap = tap_data
+    push_sse_event("tap", tap_data)
+    # Also fan out a generic event refresh signal
+    push_sse_event("refresh", {})
+
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("IOT_DB_PATH", os.path.join(_BASE_DIR, "security.db"))
+PI_LOCAL_IP = os.environ.get("PI_LOCAL_IP", "10.238.130.161")
+DASHBOARD_PORT = os.environ.get("DASHBOARD_PORT", "5001")
 
 app = Flask(__name__)
 
@@ -389,6 +427,57 @@ DASHBOARD_HTML = """
       text-align: center;
       opacity: .7;
     }
+
+    /* ── WHO TAPPED HERO PANEL ── */
+    .tap-hero {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      padding: 1.5rem;
+    }
+    .tap-avatar {
+      width: 90px;
+      height: 90px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid var(--border);
+      background: #111;
+      flex-shrink: 0;
+    }
+    .tap-avatar.granted { border-color: var(--green); box-shadow: 0 0 20px rgba(16,185,129,0.4); }
+    .tap-avatar.denied  { border-color: var(--red);   box-shadow: 0 0 20px rgba(239,68,68,0.4); }
+    .tap-info { flex: 1; }
+    .tap-name {
+      font-size: 1.6rem;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+    .tap-uid {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.3rem;
+    }
+    .tap-badge {
+      display: inline-block;
+      margin-top: 0.75rem;
+      padding: 0.4rem 1.2rem;
+      border-radius: 99px;
+      font-weight: 700;
+      font-size: 0.9rem;
+      letter-spacing: 1px;
+    }
+    .tap-badge.granted { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid var(--green); }
+    .tap-badge.denied  { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid var(--red); animation: pulse 1s infinite; }
+    .tap-time { font-size: 0.75rem; color: var(--muted); margin-top: 0.4rem; }
+    .tap-empty { color: var(--muted); font-size: 0.85rem; padding: 1.5rem; }
+
+    /* SSE flash animation when new data arrives */
+    @keyframes flashBorder {
+      0%   { border-color: var(--cyan); box-shadow: 0 0 20px rgba(6,182,212,0.5); }
+      100% { border-color: var(--border); box-shadow: var(--shadow); }
+    }
+    .card.flash { animation: flashBorder 1.5s ease-out forwards; }
   </style>
 </head>
 <body>
@@ -406,7 +495,14 @@ DASHBOARD_HTML = """
   </header>
 
   <main>
-    <!-- TOP ROW: Counters & Camera -->
+    <!-- HERO ROW: Who Tapped + Camera -->
+    <div class="card col-4" id="tap-card">
+      <h2>💳 Last Card Tap</h2>
+      <div class="tap-hero" id="tap-hero">
+        <div class="tap-empty">Waiting for first card tap…</div>
+      </div>
+    </div>
+
     <div class="card col-8">
       <h2>🛡️ AI Threat Radar (CNN-LSTM)</h2>
       <div class="counter-grid">
@@ -429,15 +525,23 @@ DASHBOARD_HTML = """
       </div>
     </div>
 
-    <div class="card col-4">
-      <h2>📷 Perimeter Edge Node (ESP32-CAM)</h2>
-      <div class="camera-container">
-        <!-- Defaults to a specific device ID you flash, e.g. ESP32_CAM_PERIMETER -->
-        <img id="live-cam" src="/api/photo/ESP32_CAM_PERIMETER" onerror="this.src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='" alt="Live Camera Feed">
-        <div class="rec-indicator"><div class="dot" style="background:var(--red);box-shadow:none;width:6px;height:6px"></div> LIVE</div>
-        <div class="camera-overlay">
-          <span>RGB CHALLENGE: ARMED</span>
-          <span id="cam-time">00:00:00</span>
+    <div class="card col-12" id="cam-card">
+      <h2>📷 Intruder Capture — ESP32-CAM Live Feed</h2>
+      <div style="display:flex;gap:1.5rem;align-items:flex-start">
+        <div class="camera-container" style="max-width:360px">
+          <img id="live-cam" src="/api/photo/ESP32_CAM_PERIMETER" onerror="this.src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='" alt="Live Camera Feed">
+          <div class="rec-indicator"><div class="dot" style="background:var(--red);box-shadow:none;width:6px;height:6px"></div> LIVE</div>
+          <div class="camera-overlay">
+            <span>RGB CHALLENGE: ARMED</span>
+            <span id="cam-time">00:00:00</span>
+          </div>
+        </div>
+        <!-- Intruder gallery — updates live via SSE -->
+        <div style="flex:1">
+          <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:.75rem">🚨 DENIED ACCESS — INTRUDER GALLERY</div>
+          <div class="intruder-grid" id="intruder-grid">
+            <div class="no-intruders">✅ No denied access attempts recorded.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -505,12 +609,10 @@ DASHBOARD_HTML = """
       </div>
     </div>
 
-    <!-- INTRUDER ALERT PANEL -->
-    <div class="card col-12">
-      <h2>🚨 Intruder Alert — Denied Access Photos</h2>
-      <div class="intruder-grid" id="intruder-grid">
-        <div class="no-intruders">✅ No denied access attempts recorded.</div>
-      </div>
+    <!-- SSE status indicator -->
+    <div id="sse-bar" style="grid-column:span 12;display:flex;align-items:center;gap:.5rem;font-size:.7rem;color:var(--muted);padding:.25rem 0">
+      <div class="dot" id="sse-dot" style="width:6px;height:6px;background:var(--muted)"></div>
+      <span id="sse-label">Connecting to real-time stream…</span>
     </div>
 
     <footer>
@@ -530,11 +632,10 @@ DASHBOARD_HTML = """
     setInterval(tick, 50);
 
     // ── Camera Polling ──
-    // Appends timestamp to bypass browser cache
     setInterval(() => {
       const img = document.getElementById('live-cam');
       img.src = '/api/photo/ESP32_CAM_PERIMETER?t=' + new Date().getTime();
-    }, 2000); // refresh every 2 seconds
+    }, 3000);
 
     // ── Helpers ──
     function fmt(ts) { return new Date(ts * 1000).toLocaleTimeString(); }
@@ -551,6 +652,50 @@ DASHBOARD_HTML = """
       return 'badge-warn';
     }
     function truncHash(h) { return h ? h.substring(0, 16) + '…' : '—'; }
+
+    // ── Flash card border to signal live update ──
+    function flashCard(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.remove('flash');
+      void el.offsetWidth; // reflow to restart animation
+      el.classList.add('flash');
+    }
+
+    // ── Who Tapped Hero Panel ──
+    function renderTapHero(tap) {
+      const hero = document.getElementById('tap-hero');
+      if (!tap || !tap.uid) { return; }
+      const granted = tap.decision === 'GRANT';
+      const cls     = granted ? 'granted' : 'denied';
+      const label   = granted ? '✅ ACCESS GRANTED' : '❌ ACCESS DENIED';
+      const ts      = tap.timestamp ? new Date(tap.timestamp * 1000).toLocaleString() : '';
+      const photoSrc = tap.photo_url || '';
+      hero.innerHTML = `
+        <img class="tap-avatar ${cls}"
+             src="${photoSrc || '/api/photo/ESP32_CAM_PERIMETER?t=' + Date.now()}"
+             onerror="this.src='data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 90 90\'%3E%3Crect width=\'90\' height=\'90\' fill=\'%23222\'/%3E%3Ctext x=\'50%%\' y=\'55%%\' text-anchor=\'middle\' fill=\'%23555\' font-size=\'32\'%3E👤%3C/text%3E%3C/svg%3E'"
+             alt="${tap.name || 'Unknown'}">
+        <div class="tap-info">
+          <div class="tap-name" style="color:${granted ? 'var(--green)' : 'var(--red)'}">${tap.name || 'UNKNOWN PERSON'}</div>
+          <div class="tap-uid">🆔 UID: ${tap.uid || '—'}&nbsp;&nbsp;|&nbsp;&nbsp;Gender: ${tap.gender || '—'}</div>
+          <div class="tap-uid">📡 Device: ${tap.device_id || '—'}</div>
+          <span class="tap-badge ${cls}">${label}</span>
+          <div class="tap-time">${ts}</div>
+          ${!granted ? '<div style="font-size:.7rem;color:var(--red);margin-top:.5rem">📸 Photo sent to Telegram</div>' : ''}
+        </div>
+      `;
+      flashCard('tap-card');
+    }
+
+    // ── Load initial tap state ──
+    async function loadLastTap() {
+      try {
+        const r = await fetch('/api/last_tap');
+        const tap = await r.json();
+        if (tap.uid) renderTapHero(tap);
+      } catch(e) {}
+    }
 
     // ── Threat Radar & Sensors ──
     async function refreshSensors() {
@@ -733,12 +878,75 @@ DASHBOARD_HTML = """
       refreshIntruders();
     }
 
+    // ── Initial load ──
     refreshAll();
-    setInterval(refreshAll, 2500); // Fast refresh for live demo
+    loadLastTap();
+
+    // ── SSE Real-Time Stream ──
+    // Replaces polling for instant updates. Falls back to polling if SSE unavailable.
+    let sseRetries = 0;
+    function connectSSE() {
+      const dot   = document.getElementById('sse-dot');
+      const label = document.getElementById('sse-label');
+
+      const es = new EventSource('/api/stream');
+
+      es.onopen = () => {
+        dot.style.background   = 'var(--green)';
+        dot.style.boxShadow    = '0 0 8px var(--green)';
+        label.textContent      = '⚡ Live stream connected — real-time updates active';
+        sseRetries = 0;
+      };
+
+      es.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'tap') {
+            renderTapHero(msg.data);
+            refreshFeed();
+            refreshIntruders();
+          } else if (msg.type === 'photo') {
+            // New camera photo arrived — refresh intruder grid
+            refreshIntruders();
+            flashCard('cam-card');
+            const img = document.getElementById('live-cam');
+            img.src = '/api/photo/ESP32_CAM_PERIMETER?t=' + Date.now();
+          } else if (msg.type === 'refresh') {
+            refreshAll();
+          } else if (msg.type === 'threat') {
+            refreshSensors();
+          }
+        } catch(err) { console.error('SSE parse error', err); }
+      };
+
+      es.onerror = () => {
+        dot.style.background = 'var(--yellow)';
+        label.textContent    = '⚠️ Stream interrupted — reconnecting…';
+        es.close();
+        sseRetries++;
+        setTimeout(connectSSE, Math.min(2000 * sseRetries, 15000));
+      };
+    }
+
+    connectSSE();
+    // Keep slow fallback poll alive for when SSE misses events
+    setInterval(refreshAll, 10000);
   </script>
 </body>
 </html>
 """
+
+
+DASHBOARD_HTML = None  # Loaded from file below
+
+def _load_template():
+    """Load the HTML template from disk (allows hot-reload during dev)."""
+    tpl_path = os.path.join(_BASE_DIR, "dashboard_template.html")
+    if os.path.exists(tpl_path):
+        with open(tpl_path, encoding="utf-8") as f:
+            return f.read()
+    # Fallback to old inline template
+    return DASHBOARD_HTML or "<h1>Dashboard template not found</h1>"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -747,7 +955,7 @@ DASHBOARD_HTML = """
 
 @app.route("/")
 def index():
-    return render_template_string(DASHBOARD_HTML)
+    return render_template_string(_load_template())
 
 
 @app.route("/api/devices")
@@ -786,21 +994,42 @@ def api_events():
             "trust_score": None,
             "timestamp": t["timestamp"],
         })
+
     events.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
 
     # Counters
     all_events = get_recent_access_log(10000)
     today_start = int(time.time()) - 86400
-    rejected = sum(1 for e in all_events if e["result"] == "REJECTED" and e["timestamp"] > today_start)
+    rejected      = sum(1 for e in all_events if e["result"] == "REJECTED"      and e["timestamp"] > today_start)
     authenticated = sum(1 for e in all_events if e["result"] == "AUTHENTICATED")
 
     return jsonify({
-        "events": events[:limit],
-        "total": len(all_events),
-        "rejected": rejected,
+        "events":        events[:limit],
+        "total":         len(all_events),
+        "rejected":      rejected,
         "authenticated": authenticated,
-        "thermal": len(thermal),
+        "thermal":       len(thermal),
     })
+
+
+@app.route("/api/firmware")
+def api_firmware():
+    """Returns the source code of the ESP32 firmware files."""
+    project_root = os.path.abspath(os.path.join(_BASE_DIR, '..'))
+    files = {
+        "network_config.h":           "network_config.h",
+        "esp32_rfid_gateway.ino":     "esp32_cam/sentry/esp32_rfid_gateway/esp32_rfid_gateway.ino",
+        "esp32_cam_surveillance.ino": "esp32_cam/sentry/esp32_cam_surveillance/esp32_cam_surveillance.ino",
+        "esp32_rogue_skimmer.ino":    "esp32_gateway/rogue_skimmer/esp32_rogue_skimmer.ino",
+    }
+    content = {}
+    for name, path in files.items():
+        try:
+            with open(os.path.join(project_root, path), 'r', encoding='utf-8') as f:
+                content[name] = f.read()
+        except Exception as e:
+            content[name] = f"// Could not load {name}: {e}"
+    return jsonify(content)
 
 
 @app.route("/api/evidence")
@@ -1052,6 +1281,53 @@ def api_deny_photo_img():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SSE Stream + Last Tap Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/stream")
+def api_stream():
+    """
+    Server-Sent Events endpoint. Each browser tab connects here once and
+    receives push messages when card taps, photos, or threat events occur.
+    """
+    q: queue.Queue = queue.Queue(maxsize=50)
+    with _sse_lock:
+        _sse_listeners.append(q)
+
+    def generate():
+        try:
+            # Send a heartbeat every 25s to keep the connection alive through proxies
+            while True:
+                try:
+                    payload = q.get(timeout=25)
+                    yield f"data: {payload}\n\n"
+                except queue.Empty:
+                    # heartbeat
+                    yield "data: {\"type\":\"ping\"}\n\n"
+        finally:
+            with _sse_lock:
+                try:
+                    _sse_listeners.remove(q)
+                except ValueError:
+                    pass
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # disable nginx buffering
+        },
+    )
+
+
+@app.route("/api/last_tap")
+def api_last_tap():
+    """Returns the most recent card-tap event (populated by notify_card_tap)."""
+    return jsonify(_last_tap)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entry Point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1061,4 +1337,4 @@ if __name__ == "__main__":
     print("  Zero-Trust IoT Security Dashboard")
     print(f"  Open → http://localhost:{port}")
     print("=" * 60 + "\n")
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
