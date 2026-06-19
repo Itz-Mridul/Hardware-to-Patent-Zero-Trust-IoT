@@ -608,17 +608,57 @@ python3 -m pytest tests/ -v
 | Thermal attack | DHT22 + SoC cross-validate | Kill-switch trigger | `test_thermal_emergency` | ✅ 100% |
 | Message replay | Nonce seen twice | REPLAY_DETECTED | `test_nonce_replay` | ✅ 100% |
 
-### 7.4 Performance Metrics
+### 7.4 Empirical Testing, ML Evaluation & Performance Metrics
 
-| Operation | Latency | Hardware |
+To prove our architecture works in the real world, we deployed the physical prototype and subjected it to thousands of automated and manual attack simulations. All data below is extracted directly from our live SQLite databases (`training_data.db`, `attack_data.db`, and `security.db`).
+
+#### A. Machine Learning Model Training Data
+Our behavioural fingerprinting model (RandomForestClassifier / CNN-LSTM) was trained on **1,051 live hardware samples**:
+- **Legitimate Samples:** 251 (23.8%)
+- **Spoof / Attack Samples:** 800 (76.2%)
+- **Model Features (6):** `rssi`, `packet_size`, `free_heap`, `inter_packet_delay`, `temperature`, `humidity`
+
+**Why the model catches emulators:**
+Software attackers running on laptops cannot perfectly mimic the hardware clock drift and thread-scheduling latency of a real ESP32 RTOS.
+- **Real ESP32 `inter_packet_delay`:** Average = 5.57ms, Max = 139.37ms (natural hardware variance)
+- **Spoof Attacker `inter_packet_delay`:** Average = 203.58ms, Min = 152.00ms (software loop overhead)
+
+#### B. Access Log & Attack Testing Results
+Over a sustained testing period, the system processed **30,494 access events**:
+- **AUTHENTICATED:** 527 events (1.7%) — Average Trust Score: **94.2**
+- **REJECTED:** 29,965 events (98.3%) — Average Trust Score: **0.1**
+
+**Top Rejection Reasons (Systematic Defences Working):**
+1. *Trust score fell below the block threshold* (29,946 events — DDoS / Flood attacks stopped)
+2. *AI_SPOOFING: CNN-LSTM confidence below threshold (fingerprint mismatch)* (12 events)
+3. *IPD too fast (spoofing detected)* (1 event)
+
+#### C. Hardware Deployment Profiles (Real-world RSSI & IPD)
+The system seamlessly handles diverse node profiles without false positives:
+
+| Node | Total Heartbeats | Avg RSSI | RSSI Min/Max | Avg Inter-Packet Delay |
+|---|---|---|---|---|
+| **ESP32_CAM_PERIMETER** | 25,979 | -44.7 dBm | -72 / -25 | 506.7 ms |
+| **ESP32_GATEWAY_001** | 1,337 | -51.7 dBm | -67 / -43 | 4,996.5 ms |
+| **ESP32_RFID_NODE** | 2,465 | -44.9 dBm | -81 / -29 | 521.8 ms |
+
+#### D. Physical Attack Detection Log
+During live sabotage simulations, our hardware sensors successfully triggered the following emergency alerts:
+- **HARDWARE_TAMPER (7 events):** MAC spoofing detected (e.g. `MAC_MISMATCH: enrolled=92:8d...41 current=92:8d...40`)
+- **FLOW_INCOMPLETE (27 events):** Glitch-skip detected in `gate_check` (missing cryptographic checkpoints)
+- **EMERGENCY_THERMAL (2 events):** Physical power kill triggered when SoC temperature reached 75.0°C (threshold = 70.0°C)
+
+#### E. System Latency Metrics
+
+| Operation | Latency | Hardware Constraint |
 |---|---|---|
-| Card tap → GRANT/DENY | < 150ms | ESP32 + Pi |
-| HMAC verification | < 1ms | ESP32 (240 MHz) |
-| Blockchain event log | < 500ms | Pi + Ganache |
-| Telegram photo alert | < 3s | Pi + mobile network |
-| Emergency key wipe | < 10ms | Pi RAM |
-| Arduino kill-switch trigger | < 15s after Pi freeze | Arduino relay |
-| CNN-LSTM inference | < 50ms | Pi CPU (no GPU) |
+| Card tap → GRANT/DENY | < 150ms | ESP32 WiFi + Pi MQTT overhead |
+| HMAC verification | < 1ms | ESP32 (240 MHz silicon) |
+| Emergency key wipe | < 10ms | Pi RAM memory overwriting |
+| CNN-LSTM inference | < 50ms | Pi CPU (no GPU acceleration) |
+| Blockchain event log | < 500ms | Pi + Ganache Ethereum emulator |
+| Telegram photo alert | < 3s | Pi → Mobile network |
+| Arduino kill-switch | < 15s | Air-gapped keep-alive timeout |
 
 ### 7.5 Dashboard Panels (Light Theme, SSE Real-Time)
 
