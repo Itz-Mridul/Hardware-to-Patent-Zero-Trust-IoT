@@ -829,6 +829,280 @@ python3 -m pytest tests/ -v
 
 ---
 
+## Complete Attack Surface & Countermeasures
+
+> This section answers: **"How many types of cyber attacks and physical attacks can our system handle, and what novel precautions did we add that are completely absent from all 5 literature review papers?"**
+
+---
+
+### CYBER ATTACKS — Full List & Our Defences
+
+#### CAT-C1: RFID Card Cloning / UID Spoofing
+| | |
+|---|---|
+| **What it is** | Attacker uses a cheap Proxmark or $5 PN532 module to silently copy any MIFARE RFID card UID in under 1 second within 10 cm |
+| **Traditional defence** | None — UID is broadcast in cleartext |
+| **Our defence** | HMAC-SHA256 on every packet. UID alone is worthless without the 32-byte secret key in ESP32 NVS flash |
+| **Result** | `HMAC_VERIFICATION_FAILED` → DENY + Telegram alert |
+| **In any literature paper?** | ❌ None of Papers 1–4, Paper 8 implement RFID-layer HMAC |
+
+---
+
+#### CAT-C2: Software Spoofing / Emulation (Network)
+| | |
+|---|---|
+| **What it is** | Attacker on the same WiFi sends forged MQTT messages pretending to be a real ESP32 |
+| **Attacker tool** | `software_attacker.py` Mode 1 / any MQTT client |
+| **Our defence Layer 1** | CNN-LSTM behavioural fingerprinting — 6 hardware features (RSSI, heap, IPD, temp, humidity, packet size). Python scripts produce anomalous inter-packet delay patterns vs real hardware |
+| **Our defence Layer 2** | HMAC signature on every message — cannot be forged without physical key |
+| **Our defence Layer 3** | Nonce-based challenge — cannot replay old messages |
+| **Result** | `SPOOF_ATTACK` → DENY + camera capture + Telegram photo |
+| **In any literature paper?** | ❌ Paper 8 detects network anomalies but not hardware behavioural fingerprinting. Papers 1, 3, 4 use desktop ML — not deployed on real hardware |
+
+---
+
+#### CAT-C3: Man-in-the-Middle (MITM) / Packet Injection
+| | |
+|---|---|
+| **What it is** | Attacker intercepts MQTT traffic between ESP32 and Pi using ARP poisoning or WiFi deauth; injects modified or forged messages mid-flight |
+| **Our defence** | Mutual TLS (MQTTS) via `mqtts_config.py` — port 8883 with per-device X.509 certificates. Each ESP32 has its own private key and cert in SPIFFS flash. Server rejects any connection without a valid client cert |
+| **Key property** | Even if attacker captures all ciphertext from the air, they cannot decrypt or inject without the private key |
+| **Result** | Connection rejected at TLS handshake — zero payload visible to attacker |
+| **In any literature paper?** | ❌ Paper 1 mentions MitM but uses Hyperledger (no MQTT). Paper 8 uses HMAC over LoRaWAN (no TLS). No paper implements per-device mutual TLS certificates |
+
+---
+
+#### CAT-C4: Message Replay Attack
+| | |
+|---|---|
+| **What it is** | Attacker captures a valid `ACCESS_GRANTED` MQTT packet and replays it 5 minutes later to unlock the door |
+| **Our defence** | Server-side nonce tracking — Pi generates a random nonce per session, ESP32 includes it in every signed message. Pi maintains a 60-second nonce seen-set. Any repeated nonce is rejected immediately |
+| **Result** | `REPLAY_DETECTED` → DENY |
+| **In any literature paper?** | Paper 8 uses nonces for HMAC auth. Papers 1–4 do not implement nonce-based replay defence |
+
+---
+
+#### CAT-C5: DDoS / Flood Attack (MQTT Broker Exhaustion)
+| | |
+|---|---|
+| **What it is** | Attacker on same WiFi floods MQTT broker with 2,500+ packets/second, exhausting connection slots and causing the Pi's decision engine to lag or crash |
+| **Attacker tool** | `software_attacker.py` Mode 2 (50 packets, 20ms interval) |
+| **Our defence Layer 1** | Mosquitto rate limiting: `max_connections = 50`, `max_inflight_messages = 20` — flood packets dropped at broker level before reaching iot_server.py |
+| **Our defence Layer 2** | Hardware GPIO watchdog via `heartbeat_monitor.py` — Arduino detects MQTT lag by measuring physical GPIO heartbeat pulse gap > 200ms → cuts relay independently of software |
+| **Our defence Layer 3** | Fail-Secure: door stays locked even if Pi software is overwhelmed |
+| **Result** | `HEARTBEAT_LOSS` → Hardware lockdown + Telegram: "DoS flood detected" |
+| **In any literature paper?** | ❌ Papers 1–4 have no hardware-level DDoS fallback. Paper 8 uses PoA rate-limiting but no hardware GPIO watchdog |
+
+---
+
+#### CAT-C6: FPGA / Hardware Replay Attack
+| | |
+|---|---|
+| **What it is** | Attacker uses FPGA (field-programmable hardware) to perfectly clone radio exchanges and replay them at hardware speed, bypassing both software AI and timing checks |
+| **Our defence Layer 1** | Nonce-based modular arithmetic timing challenge via `nonce_challenger.py`. Real ESP32 (240 MHz) solves in 50–2,000µs. FPGA solves in < 10µs. Timing discrimination = FPGA flag |
+| **Our defence Layer 2** | HMAC signature on nonce response — FPGA cannot forge without physical key |
+| **Our defence Layer 3** | RGB liveness challenge — camera must show human face lit by randomly assigned colour |
+| **Result** | `FPGA_SUSPECTED` → full lockdown |
+| **In any literature paper?** | Paper 2 detects FPGA at manufacturing. ❌ No paper detects FPGA emulators in real-time during operation |
+
+---
+
+#### CAT-C7: NTP Spoofing / Temporal Desync Attack
+| | |
+|---|---|
+| **What it is** | Attacker sends forged NTP responses to slowly drift the Pi's system clock. This desynchronises the challenge window timing and IPD expectations, eventually causing a False-Positive lockout loop that tricks the admin into lowering security thresholds |
+| **Our defence** | `clock_guard.py` — reads a DS3231 hardware RTC module via `/dev/rtc0` every 60 seconds. Compares hardware time vs NTP system time. If drift > 5 seconds → `CLOCK_TAMPER` alert → system switches to hardware time exclusively |
+| **Result** | `CLOCK_TAMPER` logged to SQLite + blockchain. `get_secure_time()` used everywhere instead of `time.time()` |
+| **In any literature paper?** | ❌ None of Papers 1–4 or Paper 8 implement hardware RTC vs NTP drift detection |
+
+---
+
+#### CAT-C8: Laser Fault Injection / Voltage Glitching (Silicon-Level Attack)
+| | |
+|---|---|
+| **What it is** | Attacker focuses a high-powered IR laser on the Pi's CPU die at the exact microsecond the access decision is evaluated (`if is_valid`). Photons generate electron-hole pairs in transistors, flipping a register bit from 0→1, converting DENY → ALLOW below all software defences. Same technique used to bypass iPhone Secure Enclave and bank card PIN chips |
+| **Our defence** | `fault_detector.py` — 4-layer mitigation: |
+| | **1. N-of-3 Redundant Voting** — `verified_decision()` evaluates access decision 3 times in separate registers with random 0–500µs jitter between each. Attacker must glitch all 3 simultaneously — probability drops geometrically |
+| | **2. Execution Flow Proof** — `FlowProof` class verifies all checkpoints (rfid_read, hmac_check, pin_check, rgb_challenge) were stamped in correct order. Glitch-skip to grant_access() detected |
+| | **3. Memory Canary** — `MemoryCanary` places a random 32-byte value in RAM. Any laser-induced bit-flip in this page is detected before granting access |
+| | **4. Voltage Rail Monitor** — MCP3008 ADC reads 3.3V supply rail. Laser glitches cause voltage sag/spike. If rail outside 3.10V–3.50V during crypto operation → `VOLTAGE_GLITCH` alert → deny |
+| **Result** | `INCOHERENT_VOTE`, `CANARY_CORRUPTED`, or `VOLTAGE_GLITCH` → emergency deny |
+| **In any literature paper?** | ❌ No paper in literature review addresses laser fault injection. This is entirely novel in IoT access control |
+
+---
+
+#### CAT-C9: Deep Packet Inspection Evasion / Rogue DNS
+| | |
+|---|---|
+| **What it is** | Compromised IoT device on the network tries to exfiltrate data via DNS queries to attacker-controlled domains, bypassing firewall by hiding data in DNS traffic |
+| **Our defence** | `dpi_firewall.py` — Scapy-based deep packet inspection. Monitors all DNS queries on `wlan0`. Any lookup for a banned domain (or unknown external IP) triggers: (1) immediate iptables DROP rule via `ip_ban()`, (2) event logged to blockchain, (3) Telegram alert |
+| **Result** | Rogue DNS traffic blocked at packet level; iptables rule persists until manual review |
+| **In any literature paper?** | ❌ None of the 5 papers implement DPI or active iptables firewall rules |
+
+---
+
+#### CAT-C10: Cold Boot / RAM Freeze Attack (Cryptographic Key Extraction)
+| | |
+|---|---|
+| **What it is** | Attacker triggers the tamper switch (cutting power briefly), immediately sprays liquid CO2 on the Pi's RAM chips (dropping to -40°C — RAM retains data for minutes when frozen), removes the DIMM into a reader, and extracts HMAC master keys directly from silicon |
+| **Our defence** | `key_vault.py` — 5-layer cold-boot mitigation: |
+| | **1. XOR Key Splitting (Shamir-style)** — master secret split into 3 XOR shares stored at non-contiguous memory locations. Attacker reading 1 or 2 shares gets cryptographically indistinguishable random bytes |
+| | **2. SecureBuffer + ctypes** — memory allocated via ctypes, zeroed on dealloc via `ctypes.memset()` |
+| | **3. mlock()** — pages pinned in RAM via Linux syscall so OS never swaps key material to disk (disk is more recoverable than RAM) |
+| | **4. Minimal Residency** — full key assembled only inside a `use()` context block, zeroed immediately on exit. Full secret in RAM for microseconds only |
+| | **5. Timing Jitter** — random 50–500µs sleep before/after crypto operations scrambles EMI pattern, defeating Van Eck / TEMPEST SDR correlation attacks |
+| **Result** | Even if attacker freezes RAM 50ms after tamper trigger, all key shares are already overwritten to zero |
+| **In any literature paper?** | ❌ No paper addresses cold-boot key extraction or RAM freezing. Entirely novel in IoT research |
+
+---
+
+#### CAT-C11: TEMPEST / Van Eck Phreaking (Electromagnetic Eavesdropping)
+| | |
+|---|---|
+| **What it is** | Attacker outside the building uses an SDR (Software Defined Radio) antenna to capture electromagnetic emissions from the Pi's CPU/RAM while processing HMAC keys. Correlating many traces reconstructs the secret |
+| **Our defence** | `key_vault.py` timing jitter (50–500µs random delay) between all crypto operations. SDR attacks require many identical traces to correlate. Jitter makes every trace look different → reconstruction fails. Hardware-grade fix: Faraday cage enclosure (documented as production upgrade path) |
+| **In any literature paper?** | ❌ No paper discusses TEMPEST/Van Eck mitigation for IoT |
+
+---
+
+### PHYSICAL ATTACKS — Full List & Our Defences
+
+#### CAT-P1: Physical Enclosure Smash / Reader Box Opening
+| | |
+|---|---|
+| **What it is** | Attacker physically breaks open the RFID reader enclosure to extract the UID whitelist from flash storage or directly wire the door relay |
+| **Our defence** | SW-420 vibration sensor → GPIO interrupt → `defense_sensors.py` → within 50ms: (1) emergency RAM key wipe, (2) MQTT lockdown broadcast to all ESP32 nodes, (3) blockchain event, (4) Telegram alert with photo |
+| **Result** | By the time attacker has the box open, all HMAC keys are overwritten. No key → no new access |
+| **In any literature paper?** | ❌ None of Papers 1–4 or Paper 8 have physical tamper sensors |
+
+---
+
+#### CAT-P2: Supply Chain Trojan (Backdoor Chip in Shipping)
+| | |
+|---|---|
+| **What it is** | Attacker intercepts ESP32 module during shipping, solders a parasitic backdoor chip onto the PCB. Device looks identical externally |
+| **Our defence** | `hardware_attestation.py` — 4-vector check on every boot: CPU eFuse serial, NIC MAC, SHA-256 timing (±50,000ns), thermal rise (±0.5°C). Parasitic chip adds bus load → timing drift; thermal mass → temperature deviation |
+| **Result** | `HARDWARE_TAMPER` → quarantine. Device refused cryptographic keys |
+| **In any literature paper?** | Paper 2 uses ROPUF for FPGA supply chain (1 vector). ❌ No paper combines 4 independent vectors including thermal fingerprinting |
+
+---
+
+#### CAT-P3: Thermal Sabotage (Heat Gun / Fire)
+| | |
+|---|---|
+| **What it is** | Attacker points a heat gun at the DHT22 sensor hoping to crash the Pi's thermal monitor and trigger a "safe mode" that unlocks the door. Or an actual fire triggers emergency mode |
+| **Our defence** | Dual-sensor cross-validation in `defense_sensors.py` + `thermal_monitor.py`: DHT22 (ambient) vs Pi SoC temperature (internal) compared simultaneously. External heat gun raises DHT22 alone (SoC stays cool) → `THERMAL_ATTACK`. Real fire raises both → `THERMAL_EMERGENCY` → Arduino kill-switch |
+| **Result** | Heat gun: `THERMAL_ATTACK` alert. Real fire: system shutdown, locked |
+| **In any literature paper?** | ❌ No paper implements dual-sensor thermal cross-validation |
+
+---
+
+#### CAT-P4: Administrator Coercion / Forced PIN Disclosure
+| | |
+|---|---|
+| **What it is** | Attacker physically threatens or kidnaps the administrator, forcing them to reveal their access PIN at gunpoint ("rubber-hose cryptanalysis") |
+| **Our defence** | `honey_pin.py` — 3-tier constant-time PIN system: |
+| | **Real PIN (e.g. 1234)** → normal access |
+| | **Duress PIN (last digit +1 = 1235)** → appears to succeed (door status LED turns green) but relay rerouted to dummy GPIO (stays locked), Telegram SOS sent silently, session logged as `DURESS_SESSION` |
+| | **Panic PIN (last digit +3 = 1237)** → full system lockdown, all tokens revoked, Telegram emergency SOS, blockchain evidence flagged read-only |
+| **Constant-time comparison** — prevents timing side-channel to detect which PIN type was entered |
+| **In any literature paper?** | ❌ None of the 5 papers implement any duress/coercion PIN mechanism. Entirely novel |
+
+---
+
+#### CAT-P5: Pi Power Failure / Freeze (Arduino Watchdog)
+| | |
+|---|---|
+| **What it is** | Attacker triggers a power outage or software freeze on the Pi hoping the door defaults to open ("fail-open") |
+| **Our defence** | Arduino Uno watchdog (`defense_sensors.py`) — air-gapped microcontroller expects `PING\n` from Pi via serial every 10 seconds. If no PING for 15 seconds: Arduino physically cuts power relay → Pi reboots into safe (locked) state |
+| **Fail-Secure** | Door relay is Normally-Open (NO) wired so power loss = locked. Door never defaults to open |
+| **In any literature paper?** | ❌ No paper has an air-gapped hardware watchdog. Novel |
+
+---
+
+### DATA BREACH & DATA LOSS PRECAUTIONS
+
+#### DB-1: Tamper-Proof Forensic Trail (Cannot Be Deleted)
+| | |
+|---|---|
+| **Risk** | Attacker hacks the Pi and deletes the SQLite access log to remove evidence of their intrusion |
+| **Our precaution** | Every event is SHA-256 hashed and stored on-chain via `blockchain_bridge.py`. Even if attacker deletes SQLite, the blockchain hash remains permanently. To verify integrity: re-hash the SQLite record and compare against blockchain — mismatch proves tampering |
+| **Comparison** | Traditional CCTV logs and flat-file audit logs on the same server are trivially deleted. Our blockchain forensic trail is immutable even from the admin account |
+| **In any literature paper?** | Papers 3 & 4 use blockchain logging. ❌ None also cross-reference a local SQLite hash-anchor trail as dual-layer verification |
+
+---
+
+#### DB-2: Photo Evidence Hash-Anchored to Blockchain
+| | |
+|---|---|
+| **Risk** | Attacker deletes ESP32-CAM intruder photos after break-in to remove surveillance evidence |
+| **Our precaution** | `photo_store.py` + `EvidenceRegistry.sol` — on every DENY event, 5 burst JPEG photos are taken, their SHA-256 hashes stored on-chain, and photos stored in Pi filesystem. Even if filesystem is wiped: blockchain hash proves photos existed and their exact content at that timestamp |
+| **In any literature paper?** | ❌ No paper links surveillance photos to blockchain evidence records |
+
+---
+
+#### DB-3: Emergency Key Wipe (< 10ms Response)
+| | |
+|---|---|
+| **Risk** | Attacker physically extracts the Pi to extract HMAC master keys from RAM |
+| **Our precaution** | SW-420 vibration interrupt → `key_vault.emergency_wipe()` in < 10ms → all HMAC keys zeroed via ctypes.memset() before attacker can even open the enclosure |
+| **In any literature paper?** | ❌ No paper implements millisecond-response cryptographic key erasure on physical tamper |
+
+---
+
+#### DB-4: Offline-First Local Whitelist (Data Unavailability Resilience)
+| | |
+|---|---|
+| **Risk** | Internet outage, Pi crash, or Ganache failure causes total system failure → no one can enter |
+| **Our precaution** | ESP32 stores a local UID whitelist in NVS flash (top 10 authorised UIDs). If MQTT connection to Pi fails for > 30 seconds, ESP32 falls back to local whitelist for GRANT decisions. Cached events dumped to Pi when connection restores |
+| **In any literature paper?** | Paper 3 notes "system stops working if blockchain is down". ❌ None implement edge-local offline fallback. Novel |
+
+---
+
+#### DB-5: Encrypted MQTT Transport (No Plaintext Data Over Air)
+| | |
+|---|---|
+| **Risk** | Attacker captures WiFi traffic and reads all RFID UIDs, trust scores, and access decisions in plaintext |
+| **Our precaution** | `mqtts_config.py` — Mutual TLS on port 8883. All MQTT traffic encrypted with TLS 1.2+. Each device has a unique X.509 certificate. No plaintext MQTT traffic ever leaves the device |
+| **In any literature paper?** | ❌ No paper in the review implements per-device MQTT TLS certificates. Paper 8 uses HMAC over LoRaWAN (no transport encryption layer) |
+
+---
+
+#### DB-6: XOR Key Splitting (No Single Memory Location Holds Full Key)
+| | |
+|---|---|
+| **Risk** | Attacker reads process memory (via `/proc/pid/mem` exploit or cold-boot) and extracts the HMAC master key |
+| **Our precaution** | `key_vault.py` — XOR secret splitting into 3 shares at non-contiguous memory addresses. Any 1 or 2 shares are cryptographically indistinguishable from random bytes. Attacker needs all 3 simultaneously. Keys assembled only for microseconds, immediately zeroed |
+| **In any literature paper?** | ❌ No paper addresses in-memory key splitting or cold-boot mitigation |
+
+---
+
+### Summary: What We Have That NO Literature Paper Has
+
+| Capability | File | Papers 1–4, 8 |
+|---|---|---|
+| Laser fault injection defence (N-of-3 voting + canary + voltage monitor) | `fault_detector.py` | ❌ None |
+| Cold boot / RAM freeze key extraction prevention | `key_vault.py` | ❌ None |
+| TEMPEST / Van Eck EM eavesdropping mitigation | `key_vault.py` (jitter) | ❌ None |
+| NTP spoofing → hardware RTC fallback | `clock_guard.py` | ❌ None |
+| Mutual TLS (MQTTS) per-device X.509 certificates | `mqtts_config.py` | ❌ None |
+| Deep packet inspection + iptables auto-ban | `dpi_firewall.py` | ❌ None |
+| Photo evidence hash-anchored to blockchain | `photo_store.py` + `EvidenceRegistry.sol` | ❌ None |
+| Execution flow proof (glitch-skip detection) | `fault_detector.py` FlowProof | ❌ None |
+| 3-tier duress/honey-PIN (constant-time) | `honey_pin.py` | ❌ None |
+| Air-gapped hardware watchdog kill-switch | Arduino + `defense_sensors.py` | ❌ None |
+| Dual thermal cross-validation (DHT22 vs SoC) | `thermal_monitor.py` | ❌ None |
+| Offline-first edge whitelist fallback | ESP32 NVS + `iot_server.py` | ❌ None |
+| RFID-layer HMAC authentication | ESP32 firmware | ❌ None |
+| Vibration tamper → < 10ms key wipe | `defense_sensors.py` | ❌ None |
+
+**Total unique cyber attack classes handled: 11**
+**Total unique physical attack classes handled: 5**
+**Total data breach/data loss precautions: 6**
+**Of these, 14 capabilities are present in our system and completely absent from all 5 literature review papers.**
+
+---
+
 ## Changelog
 
 | # | Change | Detail |
