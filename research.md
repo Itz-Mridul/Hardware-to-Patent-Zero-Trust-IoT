@@ -1085,7 +1085,7 @@ Reviewers will always ask this. Your answer:
 
 ---
 
-## Changelog — Audit & Updates (May 2026)
+## Changelog — Audit & Updates (June 2026)
 
 | # | Change | Detail |
 |---|--------|--------|
@@ -1096,6 +1096,9 @@ Reviewers will always ask this. Your answer:
 | 5 | **`start_all.sh` fixed** | Added `nonce_challenger.py` as service `[5/6]`. Fixed inconsistent `[1/4]` → `[4/5]` → `[5/5]` labelling to consistent `[1/6]` through `[6/6]`. |
 | 6 | **`EvidenceRegistry.sol` relocated** | Copied to `smart_contracts/EvidenceRegistry.sol` (was only in `blockchain/contracts/`). |
 | 7 | **Test suite fixed** | 3 IPD scoring tests updated for `EXPECTED_IPD_MS=500` (from `.env`). Final result: **95 passed, 4 skipped, 0 failed**. |
+| 8 | **Real-time Dashboard (SSE)** | Migrated `dashboard.py` from 2.5s polling to Server-Sent Events (SSE) via `/api/stream` for zero-latency UI updates. Added Identity "Who Tapped" hero panel. |
+| 9 | **Two-way Telegram Bot** | Rewrote `telegram_alert.py` to support interactive commands (`/dashboard`, `/status`, `/photos`) and instant `sendPhoto` for intruder alerts on DENY events. |
+| 10 | **Interactive Attacker Demo** | Upgraded `software_attacker.py` to a 4-mode interactive terminal UI (Spoof, Flood/DDoS, Replay, Continuous) that can be run from any laptop on the same network. |
 
 ---
 
