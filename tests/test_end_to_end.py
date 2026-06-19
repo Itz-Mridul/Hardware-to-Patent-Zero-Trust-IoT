@@ -55,8 +55,8 @@ class TestAttack1_DigitalGhost:
     """
 
     def test_fast_ipd_heavily_penalised(self, temp_db):
-        """A packet with IPD < 1000 ms must get a large negative delta and REJECTED."""
-        delta, classification, _ = iot_server.score_heartbeat(250, -50)
+        """A packet with IPD < 30% of expected (500ms) must get a large negative delta and REJECTED."""
+        delta, classification, _ = iot_server.score_heartbeat(50, -50)
         assert delta <= -30
         assert classification == "REJECTED"
 
@@ -94,8 +94,8 @@ class TestAttack1_DigitalGhost:
         assert state["trust_score"] < iot_server.BLOCK_THRESHOLD
 
     def test_legitimate_device_is_not_penalised(self, temp_db):
-        """A well-behaved device with IPD ~5000ms must be AUTHENTICATED."""
-        delta, classification, _ = iot_server.score_heartbeat(5050, -60)
+        """A well-behaved device with IPD ~500ms must be AUTHENTICATED."""
+        delta, classification, _ = iot_server.score_heartbeat(505, -60)
         assert delta >= 0
         assert classification == "AUTHENTICATED"
 

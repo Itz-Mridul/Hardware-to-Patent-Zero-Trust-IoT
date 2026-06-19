@@ -25,7 +25,9 @@ def _get_device_status(device_id):
 
 
 def test_fast_ipd_is_heavily_penalized():
-    delta, classification, reason = iot_server.score_heartbeat(750, -45)
+    # EXPECTED_IPD_MS=500 (set in .env); too_fast threshold = 30% × 500 = 150ms
+    # Use 60ms — well below the 150ms threshold, guarantees REJECTED with large penalty
+    delta, classification, reason = iot_server.score_heartbeat(60, -45)
 
     assert delta <= -30
     assert classification == "REJECTED"

@@ -159,6 +159,18 @@ def check_rfid_on_chain(uid: str) -> bool:
         return False
 
 
+import hashlib
+
+def hash_event(device_id: str, result: str, reason: str, timestamp: int) -> str:
+    """Generate a SHA-256 hash for an event (Compatibility wrapper)."""
+    data = f"{device_id}|{result}|{reason}|{timestamp}"
+    return hashlib.sha256(data.encode('utf-8')).hexdigest()
+
+def register_event_on_chain(device_id: str, data_hash: str, event_type: str = "SECURITY_EVENT") -> str:
+    """Compatibility wrapper for log_to_chain."""
+    return log_to_chain(device_id, event_type, str(data_hash))
+
+
 def register_rfid_on_chain(uid: str, owner: str) -> bool:
     """Register an RFID UID on the blockchain."""
     if _contract is None or _deployer is None:

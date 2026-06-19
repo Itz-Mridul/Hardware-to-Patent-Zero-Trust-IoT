@@ -8,7 +8,7 @@ load_dotenv()
 print("\n--- 🚀 Deploying SecurityRegistry Smart Contract 🚀 ---")
 
 # 1. Connect to Ganache
-blockchain_url = os.environ.get("BLOCKCHAIN_URL", "http://192.168.1.108:7545")
+blockchain_url = os.environ.get("BLOCKCHAIN_URL", "http://10.176.62.94:7545")
 w3 = Web3(Web3.HTTPProvider(blockchain_url))
 
 if not w3.is_connected():

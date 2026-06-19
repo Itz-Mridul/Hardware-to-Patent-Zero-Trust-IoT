@@ -3,12 +3,29 @@ import time
 import pytest
 from web3 import Web3
 
-BLOCKCHAIN_URL = "http://192.168.1.108:7545"
+BLOCKCHAIN_URL = "http://10.176.62.94:7545"
 BRIDGE_URL = "http://localhost:5010"
+
+# ── Skip entire module when bridge service is not running ─────────────────────
+# These tests require:  blockchain_bridge.py running on port 5010
+#                       Ganache running on port 7545 (Mac)
+# Run on Pi with:       bash start_all.sh
+def _bridge_available():
+    try:
+        r = requests.get(f"{BRIDGE_URL}/health", timeout=2)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+pytestmark = pytest.mark.skipif(
+    not _bridge_available(),
+    reason="blockchain_bridge service not running on port 5010 — start with bash start_all.sh",
+)
 
 @pytest.fixture
 def w3():
     return Web3(Web3.HTTPProvider(BLOCKCHAIN_URL))
+
 
 def test_bridge_health():
     response = requests.get(f"{BRIDGE_URL}/health")

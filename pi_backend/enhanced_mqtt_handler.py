@@ -7,7 +7,7 @@ from web3 import Web3
 
 # ---------------- CONFIGURATION ----------------
 
-BLOCKCHAIN_URL = os.environ.get("BLOCKCHAIN_URL", "http://192.168.1.108:7545")
+BLOCKCHAIN_URL = os.environ.get("BLOCKCHAIN_URL", "http://10.176.62.94:7545")
 CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "")
 
 # ABI for SecurityRegistry (matching blockchain_bridge.py and SecurityRegistry.sol)

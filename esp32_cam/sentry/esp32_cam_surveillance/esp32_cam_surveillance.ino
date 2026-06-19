@@ -20,11 +20,9 @@
 #include <Preferences.h>
 #include "esp_task_wdt.h"
 
-// ── 🌐 NETWORK ────────────────────────────────────────────────────────────────
-#define WIFI_SSID            "Room203"
-#define WIFI_PASSWORD        "Hostel@203"
-#define MQTT_BROKER          "192.168.1.113"
-#define MQTT_PORT            1883
+// ── 🌐 NETWORK — edit network_config.h to change WiFi/IP ────────────────────
+#include "../../../network_config.h"
+#define MQTT_BROKER          PI_MQTT_BROKER
 #define MQTT_CLIENT_ID       "ESP32CAM_SURVEILLANCE"
 #define DEVICE_ID            "ESP32_CAM_PERIMETER"
 

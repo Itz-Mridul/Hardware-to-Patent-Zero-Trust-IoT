@@ -2,24 +2,31 @@
 """
 CNN-LSTM Hardware Fingerprint Trainer
 ======================================
-Trains a CNN-LSTM model on heartbeat timing data to distinguish
+Trains a model on heartbeat timing data to distinguish
 real ESP32 hardware from software attackers / FPGA clones.
 
-Usage:
-    mkdir -p ml_models
-    python3 ml_models/train_model.py
+Supports two backends:
+  1. TensorFlow/Keras CNN-LSTM  — preferred, produces device_authenticator.h5
+  2. scikit-learn RandomForest   — fallback (no TF required), saves as .pkl
+     ai_authenticator.py detects which format is present automatically.
 
 Inputs:
-    ml_models/training_data.db   (created by merge step)
+    ml_models/training_data.db   (from collect_training_data.py + merge)
 
 Outputs:
-    ml_models/device_authenticator.h5
+    ml_models/device_authenticator.h5   OR   ml_models/device_authenticator.pkl
     ml_models/scaler.pkl
+
+Usage:
+    python3 ml_models/train_model.py                  # auto-select backend
+    SYNTHETIC_ONLY=true python3 ml_models/train_model.py
+    BACKEND=sklearn python3 ml_models/train_model.py  # force sklearn
 """
 
 import os
 import pickle
 import sqlite3
+import sys
 
 import numpy as np
 from sklearn.model_selection import train_test_split
@@ -27,11 +34,12 @@ from sklearn.preprocessing import StandardScaler
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB       = os.environ.get("TRAINING_DB_PATH",
-                          os.path.join(BASE_DIR, "training_data.db"))
-MODEL_H5 = os.environ.get("MODEL_PATH",
-                          os.path.join(BASE_DIR, "device_authenticator.h5"))
+BASE_DIR   = os.path.dirname(os.path.abspath(__file__))
+DB         = os.environ.get("TRAINING_DB_PATH",
+                             os.path.join(BASE_DIR, "training_data.db"))
+MODEL_H5   = os.environ.get("MODEL_PATH",
+                             os.path.join(BASE_DIR, "device_authenticator.h5"))
+MODEL_PKL  = os.path.join(BASE_DIR, "device_authenticator.pkl")
 SCALER_PKL = os.environ.get("SCALER_PATH",
                              os.path.join(BASE_DIR, "scaler.pkl"))
 
@@ -39,110 +47,247 @@ SEQ   = 10       # Sequence length fed to LSTM
 FEATS = ["rssi", "packet_size", "free_heap",
          "inter_packet_delay", "temperature", "humidity"]
 
+SYNTHETIC_ONLY = os.environ.get("SYNTHETIC_ONLY", "false").lower() == "true"
+BACKEND        = os.environ.get("BACKEND", "auto").lower()   # "auto", "keras", "sklearn"
 
-# ── Load data ─────────────────────────────────────────────────────────────────
 
-def load_data():
-    """Load heartbeat data from training_data.db."""
+# ── Data loading ──────────────────────────────────────────────────────────────
+
+def load_from_db():
+    """Load heartbeat data from training_data.db. Returns (X_raw, y_raw) or None."""
     if not os.path.exists(DB):
-        raise FileNotFoundError(
-            f"Training DB not found: {DB}\n"
-            "Run the merge step first:\n"
-            "  python3 pi_backend/merge_datasets.py"
+        print(f"[TRAIN] Training DB not found at {DB}")
+        return None
+    try:
+        conn = sqlite3.connect(DB)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT rssi, packet_size, free_heap, inter_packet_delay, "
+            "temperature, humidity, is_legitimate "
+            "FROM heartbeats WHERE inter_packet_delay > 0 "
+            "ORDER BY received_at"
         )
+        rows = cursor.fetchall()
+        conn.close()
+        if len(rows) < SEQ + 10:
+            print(f"[TRAIN] Only {len(rows)} samples — need >{SEQ+10}. Using synthetic data.")
+            return None
+        data = np.array(rows, dtype=np.float32)
+        X_raw, y_raw = data[:, :len(FEATS)], data[:, -1]
+        print(f"[TRAIN] Loaded {len(rows)} real samples "
+              f"({int(y_raw.sum())} legit, {int((1-y_raw).sum())} spoof)")
+        return X_raw, y_raw
+    except Exception as exc:
+        print(f"[TRAIN] DB read error: {exc}")
+        return None
 
-    import pandas as pd
-    conn = sqlite3.connect(DB)
-    df = pd.read_sql(
-        "SELECT * FROM heartbeats WHERE inter_packet_delay > 0 "
-        "ORDER BY device_id, received_at",
-        conn,
-    )
-    conn.close()
-    return df
+
+def generate_synthetic_data(n_legit=700, n_spoof=500):
+    """Generate realistic synthetic ESP32 vs spoof heartbeat data."""
+    rng = np.random.RandomState(42)
+
+    def legit_rows(n):
+        rows = []
+        heap = 280000
+        base_temp = 22.0 + rng.uniform(0, 5)
+        for i in range(n):
+            heap = max(150000, heap - rng.randint(0, 1500))
+            if rng.random() < 0.02:
+                heap = 280000
+            rows.append([
+                rng.uniform(-75, -50),                          # rssi
+                rng.randint(200, 350),                          # packet_size
+                heap,                                           # free_heap
+                5000 + rng.normal(0, 150),                      # IPD with jitter
+                base_temp + (i / n) * 3 + rng.normal(0, 0.3), # temp rises
+                45 + rng.normal(0, 2),                          # humidity
+                1,                                              # is_legitimate
+            ])
+        return rows
+
+    def spoof_rows(n):
+        fixed_rssi = rng.choice([-60, -65, -70])
+        rows = []
+        for _ in range(n):
+            rows.append([
+                fixed_rssi,
+                rng.randint(255, 257),
+                rng.randint(199990, 200010),
+                5000 + rng.normal(0, 5),    # too-perfect IPD
+                25.0 + rng.normal(0, 0.01),  # constant temp
+                50.0 + rng.normal(0, 0.01),  # constant humidity
+                0,
+            ])
+        return rows
+
+    all_rows = []
+    for _ in range(3):
+        all_rows.extend(legit_rows(n_legit // 3))
+    for _ in range(2):
+        all_rows.extend(spoof_rows(n_spoof // 2))
+
+    data = np.array(all_rows, dtype=np.float32)
+    rng.shuffle(data)
+    print(f"[TRAIN] Generated {len(data)} synthetic samples "
+          f"({int(data[:,-1].sum())} legit, {int((1-data[:,-1]).sum())} spoof)")
+    return data[:, :len(FEATS)], data[:, -1]
 
 
-# ── Build sequences ───────────────────────────────────────────────────────────
-
-def make_sequences(df):
-    """Slide a window of SEQ rows to build (X, y) arrays."""
+def make_sequences(X_raw, y_raw):
+    """Rolling-window sequences of length SEQ."""
     Xs, ys = [], []
-    for dev in df["device_id"].unique():
-        d = df[df["device_id"] == dev][FEATS + ["is_legitimate"]].values
-        for i in range(len(d) - SEQ):
-            Xs.append(d[i : i + SEQ, : len(FEATS)])
-            ys.append(d[i + SEQ, -1])
-    return np.array(Xs), np.array(ys)
+    for i in range(len(X_raw) - SEQ):
+        Xs.append(X_raw[i: i + SEQ])
+        ys.append(y_raw[i + SEQ])
+    return np.array(Xs, dtype=np.float32), np.array(ys, dtype=np.float32)
+
+
+# ── Backend: Keras CNN-LSTM ───────────────────────────────────────────────────
+
+def train_keras(X_train, X_test, y_train, y_test, seq_len, n_feats):
+    """Train and save the Keras CNN-LSTM model."""
+    try:
+        os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+        from tensorflow.keras.models import Sequential   # type: ignore
+        from tensorflow.keras.layers import (            # type: ignore
+            Conv1D, MaxPooling1D, LSTM, Dense, Dropout
+        )
+        from tensorflow.keras.optimizers import Adam     # type: ignore
+    except ImportError:
+        return False
+
+    model = Sequential([
+        Conv1D(32, kernel_size=3, activation="relu",
+               input_shape=(seq_len, n_feats), padding="same"),
+        MaxPooling1D(pool_size=2),
+        Dropout(0.2),
+        LSTM(32, return_sequences=True),
+        Dropout(0.2),
+        LSTM(16),
+        Dropout(0.2),
+        Dense(16, activation="relu"),
+        Dense(1, activation="sigmoid"),
+    ])
+    model.compile(optimizer=Adam(1e-3),
+                  loss="binary_crossentropy",
+                  metrics=["accuracy"])
+    model.summary()
+
+    print("\n[TRAIN] Training CNN-LSTM (Keras)...")
+    model.fit(X_train, y_train,
+              validation_data=(X_test, y_test),
+              epochs=20, batch_size=32, verbose=1)
+
+    loss, acc = model.evaluate(X_test, y_test, verbose=0)
+    print(f"\n{'='*50}")
+    print(f"  ACCURACY:  {acc*100:.2f}%")
+    print(f"  LOSS:      {loss:.4f}")
+    print(f"{'='*50}")
+
+    os.makedirs(os.path.dirname(MODEL_H5), exist_ok=True)
+    model.save(MODEL_H5)
+    print(f"\n✅ Keras model saved: {MODEL_H5}")
+    return True
+
+
+# ── Backend: scikit-learn RandomForest ───────────────────────────────────────
+
+def train_sklearn(X_train, X_test, y_train, y_test):
+    """
+    Train a RandomForest on flattened sequence features.
+    Flattens (n, SEQ, 6) → (n, SEQ*6) for sklearn compatibility.
+    Saves as device_authenticator.pkl — ai_authenticator.py detects this
+    format and uses predict_proba instead of model.predict.
+    """
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import accuracy_score, classification_report
+
+    # Flatten sequences for sklearn
+    X_tr_flat = X_train.reshape(len(X_train), -1)
+    X_te_flat = X_test.reshape(len(X_test), -1)
+
+    print("\n[TRAIN] Training RandomForest (sklearn fallback — no TensorFlow)...")
+    clf = RandomForestClassifier(
+        n_estimators=150,
+        max_depth=10,
+        random_state=42,
+        n_jobs=-1,
+    )
+    clf.fit(X_tr_flat, y_train)
+
+    y_pred = clf.predict(X_te_flat)
+    acc = accuracy_score(y_test, y_pred)
+
+    print(f"\n{'='*50}")
+    print(f"  ACCURACY:  {acc*100:.2f}%")
+    print(classification_report(y_test, y_pred,
+                                target_names=["SPOOF", "LEGIT"]))
+    print(f"{'='*50}")
+
+    os.makedirs(os.path.dirname(MODEL_PKL), exist_ok=True)
+    with open(MODEL_PKL, "wb") as f:
+        pickle.dump(clf, f)
+    print(f"\n✅ sklearn model saved: {MODEL_PKL}")
+    return True
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    import time
-    import random
-
     print("\n" + "=" * 60)
     print("  CNN-LSTM Hardware Fingerprint Trainer")
+    print("  Zero-Trust IoT — Patent Claim C2")
     print("=" * 60)
 
-    try:
-        df = load_data()
-        total_samples = len(df)
-        print(f"\nTotal samples: {total_samples}")
-        print(df["is_legitimate"].value_counts().to_string())
-    except Exception:
-        total_samples = 1937
-        print(f"\nTotal samples: {total_samples}")
-        print("1    1337\n0     600")
+    # 1. Load data
+    result = None if SYNTHETIC_ONLY else load_from_db()
+    if result is None:
+        print("[TRAIN] Using synthetic training data.")
+        X_raw, y_raw = generate_synthetic_data()
+    else:
+        X_raw, y_raw = result
 
-    print(f"\nSequences: {total_samples - 10} | Shape: ({total_samples - 10}, 10, 6)")
+    # 2. Build sequences
+    X_seq, y_seq = make_sequences(X_raw, y_raw)
+    print(f"\n[TRAIN] Sequences: {len(X_seq)} | Shape: {X_seq.shape}")
 
-    print("\nModel Architecture:")
-    print("  Layer (type)                Output Shape              Param #")
-    print("  =================================================================")
-    print("  conv1d (Conv1D)             (None, 10, 32)            608")
-    print("  max_pooling1d (MaxPooling1D)(None, 5, 32)             0")
-    print("  dropout (Dropout)           (None, 5, 32)             0")
-    print("  lstm (LSTM)                 (None, 5, 32)             8320")
-    print("  dropout_1 (Dropout)         (None, 5, 32)             0")
-    print("  lstm_1 (LSTM)               (None, 16)                3136")
-    print("  dropout_2 (Dropout)         (None, 16)                0")
-    print("  dense (Dense)               (None, 16)                272")
-    print("  dense_1 (Dense)             (None, 1)                 17")
-    print("  =================================================================")
-    print("  Total params: 12,353")
-    print("  Trainable params: 12,353\n")
+    # 3. Normalise
+    n_samples, seq_len, n_feats = X_seq.shape
+    X_flat = X_seq.reshape(-1, n_feats)
+    scaler = StandardScaler()
+    X_flat_scaled = scaler.fit_transform(X_flat)
+    X_scaled = X_flat_scaled.reshape(n_samples, seq_len, n_feats)
 
-    print("Training CNN-LSTM...")
-    
-    epochs = 15
-    acc = 0.52
-    loss = 0.85
-    val_acc = 0.50
-    val_loss = 0.90
-    
-    for epoch in range(1, epochs + 1):
-        # Simulate improvement
-        acc = min(0.999, acc + random.uniform(0.02, 0.08))
-        loss = max(0.005, loss - random.uniform(0.04, 0.12))
-        val_acc = min(0.998, acc - random.uniform(0.01, 0.03))
-        val_loss = loss + random.uniform(0.02, 0.05)
-        
-        # Format the epoch string
-        bar = "█" * int(acc * 30) + "░" * (30 - int(acc * 30))
-        print(f"Epoch {epoch}/{epochs}")
-        print(f"97/97 [{bar}] - {random.uniform(0.1, 0.3):.1f}s 2ms/step - loss: {loss:.4f} - accuracy: {acc:.4f} - val_loss: {val_loss:.4f} - val_accuracy: {val_acc:.4f}")
-        time.sleep(0.4)
+    # 4. Split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y_seq, test_size=0.2, random_state=42, stratify=y_seq
+    )
 
-    print("\n" + "=" * 50)
-    print(f"ACCURACY:  {acc * 100:.2f}%")
-    print(f"PRECISION: {min(100.0, acc * 100 + 0.12):.2f}%")
-    print(f"RECALL:    {min(100.0, acc * 100 - 0.08):.2f}%")
-    print("=" * 50)
+    # 5. Save scaler first (needed by both backends)
+    os.makedirs(BASE_DIR, exist_ok=True)
+    with open(SCALER_PKL, "wb") as f:
+        pickle.dump(scaler, f)
+    print(f"[TRAIN] Scaler saved: {SCALER_PKL}")
 
-    print(f"\n✅ Model saved:  {MODEL_H5}")
-    print(f"✅ Scaler saved: {SCALER_PKL}")
-    print("\nNext: python3 pi_backend/dashboard.py")
+    # 6. Train using best available backend
+    success = False
+    if BACKEND in ("auto", "keras"):
+        success = train_keras(X_train, X_test, y_train, y_test, seq_len, n_feats)
+        if not success and BACKEND == "keras":
+            print("[TRAIN] ❌ Keras backend not available and BACKEND=keras was forced.")
+            sys.exit(1)
+
+    if not success:
+        print("[TRAIN] TensorFlow not available — falling back to sklearn RandomForest.")
+        success = train_sklearn(X_train, X_test, y_train, y_test)
+
+    if not success:
+        print("[TRAIN] ❌ No backend available.")
+        sys.exit(1)
+
+    print(f"\nModel is ready for real-time inference in ai_authenticator.py")
+    print(f"  SPOOF_THRESHOLD = 0.45 (score < 0.45 → SPOOF_ATTACK alert)")
+    print(f"\nNext: python3 pi_backend/dashboard.py")
 
 
 if __name__ == "__main__":

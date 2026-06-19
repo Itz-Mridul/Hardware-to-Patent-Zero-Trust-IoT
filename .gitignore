@@ -48,3 +48,4 @@ pi_backend/fingerprint_model.pkl
 # Original data
 edge_ml_gateway/iot_data.db
 iot_data.db
+.aider*

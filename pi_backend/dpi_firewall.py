@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 
 from flask import Flask
 from scapy.all import DNSQR, IP, sniff
@@ -15,15 +16,16 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
-from blockchain_bridge import hash_event, send_to_blockchain
+from pi_backend.blockchain_bridge import hash_event
+from pi_backend.enhanced_mqtt_handler import send_to_blockchain
 
 
 # --- 1. CONFIGURATION ---
 
 INTERFACE = os.environ.get("GATEWAY_IFACE", "wlan0")
-GATEWAY_IP = os.environ.get("GATEWAY_IP", "192.168.1.113")
-COMMAND_CENTER_IP = os.environ.get("COMMAND_CENTER_IP", "192.168.1.113")
-PI_LOCAL_IP = os.environ.get("PI_LOCAL_IP", "192.168.1.113")
+GATEWAY_IP = os.environ.get("GATEWAY_IP", "10.176.62.161")
+COMMAND_CENTER_IP = os.environ.get("COMMAND_CENTER_IP", "10.176.62.161")
+PI_LOCAL_IP = os.environ.get("PI_LOCAL_IP", "10.176.62.161")
 COMMAND_CENTER_PORT = 5000
 
 BANNED_DOMAINS = ["spacejam.com", "tiktok.com", "facebook.com"]
@@ -111,7 +113,7 @@ def record_on_chain(event_text):
     capture loop return immediately.
     """
     def _worker():
-        fingerprint = hash_event(event_text)
+        fingerprint = hash_event(event_text, "DPI_EVENT", "GATEWAY", int(time.time()))
         receipt = send_to_blockchain(event_text[:64], fingerprint)
         if receipt is None:
             logging.warning("[BLOCKCHAIN] Failed to record event: %s", event_text)

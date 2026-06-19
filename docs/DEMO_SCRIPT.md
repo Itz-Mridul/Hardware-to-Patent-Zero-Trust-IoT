@@ -1,74 +1,194 @@
-# Zero-Trust IoT Security: Live Tabletop Demonstration
-**A Unified Presentation Script for Team A & Team B**
-
-This document outlines how to present the entire patent-pending architecture on a single, small conference table using your exact hardware inventory. 
-
-## 📦 The Hardware Setup (The "Tabletop Layout")
-
-Since you only have **one** 5V relay, we have allocated it to the **Arduino Kill-Switch**. This is your most powerful patent claim. The door locking mechanism will be simulated purely through the RGB LED (Green = Open, Red = Locked).
-
-**Left Side of Table: "The Public Zone" (The Front Door)**
-*   **Device:** ESP32-CAM.
-*   **Attached:** 1x RC522 RFID Reader, 1x RGB LED.
-*   **Story:** This is mounted outside the secure facility. 
-
-**Right Side of Table: "The Secure Vault" (Inside the Room)**
-*   **Device 1:** Raspberry Pi (The Brain) displaying the Dashboard on a laptop screen.
-*   **Device 2:** Arduino Uno (The Bodyguard) sitting next to the Pi.
-*   **Attached to Arduino:** DHT22 (Temp), SW-420 (Vibration), and the **1x 5V Relay** (spliced into the Pi's USB-C power cable).
-*   **Device 3:** ESP32 Standard (Telemetry). Just plugged into power, simulating the internal network heartbeat.
+# 🎬 Zero-Trust IoT — Live Demo Script
+**Hardware-to-Patent Security Platform | Presentation Guide**
 
 ---
 
-## 🎬 The Presentation Script
+## 📦 Table Setup (Before Professor Arrives)
 
-### Introduction (Both Teams - 2 mins)
-**Speaker:** "Welcome. Today, IoT security focuses entirely on software. If an attacker bypasses the firewall, they win. Our project introduces a zero-trust architecture that assumes the network *is already compromised*. We present a military-grade fusion of AI telemetry, blockchain forensics, and an unhackable, air-gapped physical kill-switch. We will now demonstrate how this system defends against four distinct attack vectors."
+```
+LEFT SIDE — "The Front Door"          RIGHT SIDE — "The Control Room"
+┌─────────────────────────┐           ┌──────────────────────────────┐
+│  Standard ESP32         │           │  Raspberry Pi 5 (8GB)        │
+│  + RC522 RFID Reader    │           │  + Laptop showing dashboard  │
+│  + RGB LED              │           │                              │
+│                         │           │  ESP32-CAM (facing table)    │
+│  [RFID cards nearby]    │           │  + Flash LED                 │
+│  - Mridul card (real)   │           │                              │
+│  - Onkar card (real)    │           │  Mac (open, Ganache running) │
+│  - Any other card(fake) │           └──────────────────────────────┘
+└─────────────────────────┘
+```
 
----
-
-### ACT 1: Normal Access & Blockchain Forensics (Team A - Software)
-**The Scenario:** A legitimate employee tries to enter.
-1.  **Action:** You tap your RFID card on the ESP32-CAM reader.
-2.  **Visual:** The RGB LED flashes a random color (e.g., CYAN).
-3.  **Speaker (Team A):** "When the card is tapped, the server doesn't just open the door. It issues a randomized RGB color challenge. The camera snaps a photo, ensuring the person's face is illuminated with that exact color. This defeats iPad deepfakes—the attacker can't predict the color."
-4.  **Visual:** The Dashboard screen turns Green. The RGB LED turns Green.
-5.  **Speaker:** "Access is granted. Crucially, a SHA-256 hash of this event is immediately written to a local Ethereum Blockchain (Ganache). If a hacker later gains root access to the Pi, they cannot erase the forensic audit trail."
-
----
-
-### ACT 2: The Network Spoofing Attack (Team A - AI Engine)
-**The Scenario:** A hacker tries to inject fake packets over Wi-Fi.
-1.  **Action:** Point to the standard ESP32 (Telemetry Node) sitting quietly on the table.
-2.  **Speaker:** "This standard ESP32 is acting as an internal sensor, sending heartbeats to the Pi. Notice the CNN-LSTM dashboard shows a 'Trust Score' of 100%."
-3.  **Action:** (Simulate) Open a terminal on your laptop and run your `spoof_attack.py` script.
-4.  **Visual:** The Dashboard Trust Score rapidly drops to 0%, flashing red.
-5.  **Speaker:** "An attacker is trying to clone the device's MAC address and inject fake data. However, our Deep Learning model analyzes the microsecond network jitter (inter-packet delay). It realizes the timing signature doesn't match the real hardware, and instantly blocks the attacker."
-
----
-
-### ACT 3: The Duress "Honey-PIN" (Team A & B Bridge)
-**The Scenario:** A manager is held at gunpoint and forced to unlock the system.
-1.  **Action:** Type `9999` (The Duress PIN) into the Web Dashboard console.
-2.  **Visual:** The Dashboard says "Unlocked" (Green), but a Telegram alert is secretly sent to your phone.
-3.  **Speaker:** "If an admin is coerced, they enter a 'Honey-PIN'. To the attacker, the door unlocks and the system looks normal. In reality, a silent alarm is dispatched, and all critical database access is restricted using constant-time cryptographic comparisons to prevent side-channel timing attacks."
+### Pre-Demo Checklist (5 min before)
+- [ ] Mac: `iot-start` → Ganache open, accounts visible
+- [ ] Pi: `bash start_all.sh` → all 6 services running
+- [ ] Browser open: `http://192.168.1.113:5001`  ← update if Pi IP changed
+- [ ] ESP32 RFID Gateway: Serial Monitor shows heartbeats
+- [ ] ESP32-CAM: Serial Monitor shows `[ 💓 ] IPD: 500ms`
+- [ ] Telegram app open on phone
+- [ ] Both RFID cards within reach
 
 ---
 
-### ACT 4: The Out-of-Band Hardware Watchdog (Team B - Hardware)
-**The Vulnerability:** A hacker launches a massive DDoS attack against the Pi. The CPU hits 100%, and the Linux OS freezes. If the Pi freezes, its software can't trigger the kill-switch, leaving the hardware defenseless against physical theft.
+## 🎤 Presentation Script
 
-**The Scenario:** The hacker gives up on software, breaks into the room, and tries to smash or steal the server while it is frozen.
+### INTRO (1 minute)
 
-1.  **Speaker (Team B):** *"Professor, relying on a Linux server to monitor its own physical hardware is a fatal flaw. If the server is compromised by malware or frozen by a DDoS attack, the software can just be turned off. That is why we integrated an Arduino Uno as an 'Out-of-Band Hardware Watchdog'."*
-2.  **Action:** Point to the Arduino Uno on the table.
-3.  **Speaker (Team B):** *"This Arduino is completely air-gapped from the network. It has no operating system and no Wi-Fi chip. It runs a single loop of C++ code thousands of times a second. It is physically impossible to hack over the internet, and it cannot freeze from network traffic. It has one single physical job."*
-4.  **Action (The Climax):** You aggressively tap or shake the Arduino Uno/Raspberry Pi setup on the table. 
-5.  **Visual:** 
-    *   The SW-420 Vibration sensor triggers.
-    *   *CLICK!* The 5V Relay loudly snaps open.
-    *   The Raspberry Pi's power lights instantly go dead.
-6.  **Speaker (Team B):** *"The Arduino doesn't ask the Pi for permission. It doesn't care if the Pi is frozen. When it detects kinetic tampering, it forcefully severs the power supply to the main server. Because our vault uses volatile memory (`tmpfs`), the moment power is lost, it executes a zero-day RAM wipe. All cryptographic keys vanish into electronic dust. You cannot hack a system that isn't connected to the internet, and you cannot steal keys that no longer exist."*
+> *"Today's IoT security assumes the network is safe. Our system assumes it's already compromised — that's what Zero-Trust means. Every device must continuously prove its identity. Every access is logged permanently. Every intruder is photographed. Let us show you how."*
 
-### Conclusion (1 min)
-**Speaker:** "By combining software-level AI fingerprinting, immutable blockchain logging, and an un-bypassable physical hardware kill-switch, we have created a multi-layered patentable architecture where compromising one layer simply traps the attacker in the next."
+Point to the table layout and explain the 3 nodes:
+- **Standard ESP32** = The door lock
+- **ESP32-CAM** = The silent watcher
+- **Raspberry Pi** = The intelligent brain
+- **Mac** = The permanent blockchain record
+
+---
+
+## ACT 1 — Normal Authorized Access (2 min)
+
+### What to do:
+Tap **Mridul's card** on the RC522 reader.
+
+### What happens (explain each step):
+| Event | What to point at |
+|---|---|
+| LED turns **GREEN** for 5 seconds | Point at the RGB LED |
+| Dashboard logs `✅ GRANTED — Mridul` | Point at laptop screen |
+| Blockchain table gets a new row with SHA-256 hash | Point at Forensic Ledger panel |
+
+### What to say:
+> *"The card's UID and HMAC signature are verified in under 200ms. The green light confirms access. The moment this happens, an immutable cryptographic record is written to our private Ethereum blockchain — timestamped and tamper-proof forever."*
+
+---
+
+## ACT 2 — Unauthorized Access + Surveillance (2 min)
+
+### What to do:
+Tap an **unknown/fake card** on the RC522 reader.
+
+### What happens (explain each step):
+| Event | What to point at |
+|---|---|
+| LED turns **RED** for 5 seconds | Point at the RGB LED |
+| ESP32-CAM **flashes 5 times** | Point at the camera |
+| Telegram receives **photo + alert** | Show phone to professor |
+| Dashboard logs `❌ DENY` with intruder photos | Point at laptop screen |
+| Blockchain gets DENY TX hash | Point at Forensic Ledger |
+
+### What to say:
+> *"The system detected an unrecognized credential. In the same instant — the door stays locked, and our surveillance node silently wakes up, fires its flash, and captures 5 burst photos of the intruder in 3 seconds. These photos are pushed to our Telegram channel AND permanently linked to the blockchain record. The attacker cannot deny they were there."*
+
+---
+
+## ACT 3 — AI Trust Scoring + Anti-Spoofing (2 min)
+
+### What to do:
+Point to the **Hardware Trust Scores** panel on the dashboard.
+
+### What to show:
+- Live trust percentage for each ESP32 node
+- IPD (Inter-Packet Delay) in milliseconds
+- RSSI signal strength
+
+### What to say:
+> *"Every 500 milliseconds, each ESP32 sends a cryptographically signed heartbeat. Our CNN-LSTM AI model analyzes the timing pattern — the inter-packet delay — and the signal strength. A real ESP32 has a consistent, hardware-level timing fingerprint. An FPGA clone trying to spoof it will have microsecond-level jitter that our model detects as a threat."*
+
+> *"If the trust score drops below our threshold, the device is quarantined. No card tap is even attempted. This is hardware-level Zero-Trust."*
+
+---
+
+## ACT 4 — Physical Tamper Detection (1 min)
+
+### What to do:
+Lightly **shake the Raspberry Pi** (or the table near the SW-420 sensor).
+
+### What happens:
+| Event | What to point at |
+|---|---|
+| Dashboard shows `PHYSICAL TAMPER` alert | Tamper panel on dashboard |
+| Telegram alert fires | Show phone |
+
+### What to say:
+> *"Our SW-420 vibration sensor detects physical tampering — someone trying to open the enclosure or move the device. The moment it triggers, cryptographic keys in RAM are wiped. There is nothing left to steal. The attacker gets hardware — but it's a brick."*
+
+---
+
+## ACT 5 — Blockchain Forensic Evidence (1 min)
+
+### What to show:
+- Open **Ganache** on Mac
+- Show the **Transactions** tab — every card tap is a blockchain transaction
+- Show the **SHA-256 hashes** in the dashboard matching the on-chain data
+
+### What to say:
+> *"Every single event — grant, deny, tamper, thermal anomaly — is logged here as an Ethereum transaction with a SHA-256 hash. This is court-admissible forensic evidence. You cannot alter a single entry without invalidating every hash that follows. This is why we call it Hardware-to-Patent — the evidence chain starts at the physical card and ends as permanent law."*
+
+---
+
+## ACT 6 — Attack Simulation with Rogue Skimmer (1 min)
+
+### What to do:
+Power on the **Rogue Skimmer ESP32** (the third ESP32 running `esp32_rogue_skimmer.ino`).
+
+### What happens:
+| Event | What to point at |
+|---|---|
+| Dashboard **Threat Radar** turns RED | Threat panel on dashboard |
+| `AI SPOOFING` counter increments | Tamper summary panel |
+
+### What to say:
+> *"This device is simulating an FPGA hardware clone trying to replay a legitimate heartbeat. Watch the dashboard — within seconds, our AI fingerprinting detects the timing anomaly and flags it. The rogue device is quarantined before it can send a single RFID request."*
+
+---
+
+## 📊 Q&A Cheat Sheet
+
+| Question | Answer |
+|---|---|
+| *"What if the Pi loses power?"* | ESP32 has a local UID whitelist — continues granting/denying offline |
+| *"What if Ganache goes down?"* | Events are cached in SQLite locally, synced to blockchain when reconnected |
+| *"Can someone jam the WiFi?"* | Heartbeat loss is detected — devices are immediately quarantined |
+| *"Is this patentable?"* | Yes — see `docs/PATENT_CLAIMS.md` for 6 novel patent claims |
+| *"What's the latency?"* | GRANT/DENY decision in under 200ms, photo in under 4 seconds |
+| *"How many users can it support?"* | Limited by `authorized_users.json` — scalable to any size DB |
+
+---
+
+## 🛑 Emergency Recovery
+
+If something breaks during demo:
+
+**Dashboard not loading:**
+```bash
+# On Pi
+iot-stop && iot-start
+```
+
+**ESP32 not responding:**
+- Press RESET button on ESP32
+- Check Serial Monitor for WiFi connection message
+
+**Telegram not sending:**
+- Verify phone has internet (not just local WiFi)
+- Check `.env` has correct `TELEGRAM_BOT_TOKEN`
+
+**Blockchain TX not appearing:**
+```bash
+# On Mac — check Ganache is still running
+iot-status
+```
+
+---
+
+## ⏱️ Demo Timeline
+
+| Time | Action |
+|---|---|
+| 0:00 | Intro — explain architecture |
+| 1:00 | ACT 1 — tap Mridul card (green LED) |
+| 3:00 | ACT 2 — tap fake card (red LED + Telegram photo) |
+| 5:00 | ACT 3 — show trust score panel |
+| 7:00 | ACT 4 — physical tamper demo |
+| 8:00 | ACT 5 — Ganache blockchain evidence |
+| 9:00 | ACT 6 — rogue skimmer attack |
+| 10:00 | Q&A |

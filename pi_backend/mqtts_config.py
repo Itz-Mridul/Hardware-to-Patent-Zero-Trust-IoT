@@ -128,7 +128,7 @@ def get_tls_context_if_available(**kwargs) -> Optional[ssl.SSLContext]:
 def generate_ca_and_certs(
     output_dir: Optional[Path] = None,
     devices: Optional[list] = None,
-    pi_ip: str = "192.168.1.113",
+    pi_ip: str = "10.176.62.161",
 ) -> None:
     """
     Generates a self-signed CA, a server cert, and one client cert per device.
@@ -282,7 +282,7 @@ if __name__ == "__main__":
         help="Print Mosquitto TLS config snippet"
     )
     parser.add_argument(
-        "--pi-ip", default="192.168.1.113",
+        "--pi-ip", default="10.176.62.161",
         help="Raspberry Pi IP (added to server cert SAN)"
     )
     parser.add_argument(

@@ -26,11 +26,9 @@
 #include <Preferences.h>
 // esp_task_wdt.h removed — non-blocking state machine never needs WDT reset
 
-// ── 🌐 NETWORK ────────────────────────────────────────────────────────────────
-#define WIFI_SSID            "Room203"
-#define WIFI_PASSWORD        "Hostel@203"
-#define MQTT_BROKER          "192.168.1.113"
-#define MQTT_PORT            1883
+// ── 🌐 NETWORK — edit network_config.h to change WiFi/IP ────────────────────
+#include "../../../network_config.h"
+#define MQTT_BROKER          PI_MQTT_BROKER
 #define MQTT_CLIENT_ID       "ESP32_RFID_GATEWAY"
 #define DEVICE_ID            "ESP32_RFID_NODE"
 
@@ -373,7 +371,7 @@ void setup() {
     delay(500);
 
     Serial.println(F("\n ╔══════════════════════════════════╗"));
-    Serial.println(F("  ║  ZERO-TRUST RFID GATEWAY  v1    ║"));
+    Serial.println(F("  ║  ZERO-TRUST RFID GATEWAY  v1     ║"));
     Serial.println(F("  ║  Standard ESP32 + RC522          ║"));
     Serial.println(F("  ╚══════════════════════════════════╝\n"));
 
@@ -394,10 +392,65 @@ void setup() {
         (ver == 0x91 || ver == 0x92) ? "✅ Official" :
         (ver == 0x00 || ver == 0xFF) ? "❌ NOT FOUND" : "⚠️ Clone");
 
-    Serial.print(F(" [ 🌐 ] Connecting WiFi"));
+    // ── 🔍 WiFi Scan — shows ALL visible networks ──────────────────────────
+    // ⚠️  HARDCODED credentials below (bypassing network_config.h for debug)
+    //
+    // OPTION A — Your hotspot (fix band to 2.4GHz first):
+    const char* MY_SSID   = "Onki";
+    const char* MY_PASS   = "123456789";
+    //
+    // OPTION B — Campus WiFi (strongest visible: Room203 at -42 dBm):
+    // const char* MY_SSID = "Room203";
+    // const char* MY_PASS = "??????????";  // ← enter Room203 password here
+    //
+    // MQTT_BROKER is defined globally from network_config.h → PI_MQTT_BROKER
+
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) { delay(400); Serial.print("."); }
+    WiFi.disconnect(true);
+    delay(1000);
+
+    Serial.println(F("\n [ 🔍 ] Scanning WiFi networks..."));
+    int n = WiFi.scanNetworks();
+    if (n == 0) {
+        Serial.println(F(" [ 🔍 ] No networks found at all!"));
+    } else {
+        Serial.printf(" [ 🔍 ] Found %d networks:\n", n);
+        for (int i = 0; i < n; i++) {
+            Serial.printf("   [%d] SSID: %-24s  RSSI: %3d dBm  Ch: %2d  Enc: %d%s\n",
+                i + 1,
+                WiFi.SSID(i).c_str(),
+                WiFi.RSSI(i),
+                WiFi.channel(i),
+                WiFi.encryptionType(i),
+                (WiFi.SSID(i) == MY_SSID) ? "  ← TARGET ✅" : ""
+            );
+        }
+    }
+    WiFi.scanDelete();
+
+    Serial.printf("\n [ 🌐 ] Connecting to: \"%s\"\n", MY_SSID);
+    WiFi.begin(MY_SSID, MY_PASS);
+    {
+        uint8_t tries = 0;
+        while (WiFi.status() != WL_CONNECTED && tries < 60) {   // 60 × 500ms = 30s
+            delay(500);
+            tries++;
+            uint8_t st = WiFi.status();
+            if (tries % 4 == 0) {
+                Serial.printf(" [ 🌐 ] status=%d  ", st);
+                if      (st == WL_NO_SSID_AVAIL)  Serial.println(F("❌ SSID NOT FOUND"));
+                else if (st == WL_CONNECT_FAILED)  Serial.println(F("❌ WRONG PASSWORD"));
+                else if (st == WL_DISCONNECTED)    Serial.println(F("⏳ Associating..."));
+                else if (st == WL_IDLE_STATUS)     Serial.println(F("⏳ Idle..."));
+                else                               Serial.println(F("⏳ Waiting..."));
+            } else { Serial.print("."); }
+        }
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println(F("\n [ 🌐 ] ❌ WiFi FAILED after 30s — rebooting in 5s"));
+            delay(5000);
+            ESP.restart();
+        }
+    }
     Serial.printf("\n [ 🌐 ] IP: %s\n", WiFi.localIP().toString().c_str());
 
     mqtt.setServer(MQTT_BROKER, MQTT_PORT);
@@ -424,7 +477,8 @@ void loop() {
             mqtt.subscribe(TOPIC_DECISION);
             mqtt.subscribe(TOPIC_NONCE_CHALLENGE);
         } else {
-            Serial.println(F("FAILED"));
+            Serial.print(F("FAILED  state="));
+            Serial.println(mqtt.state());  // -4=timeout -3=denied -2=lost -1=disconnect 1=bad-proto 2=bad-id 3=unavail 4=bad-cred 5=unauth
         }
     }
     if (mqtt.connected()) mqtt.loop();

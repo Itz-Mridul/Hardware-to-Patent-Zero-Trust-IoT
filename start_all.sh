@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 #  start_all.sh — Zero-Trust IoT Security Gateway Startup
-#  v2 — Phase 2 Full Stack (4 services)
+#  v3 — Full Stack (6 services: MQTT + IoT/AI + Sensors + Dashboard + Blockchain + Nonce + Telegram)
 # ============================================================
 #  Run on the Raspberry Pi:  bash start_all.sh
 #
@@ -83,13 +83,32 @@ else:
             print(f'      ❌ {alert}')
 " || echo -e "${YELLOW}  Attestation skipped (library not available or first boot)${NC}"
 
+# ── Ensure Mosquitto MQTT broker is running ────────────────────
+echo ""
+echo -e "${CYAN}[MQTT] Checking Mosquitto broker...${NC}"
+if command -v mosquitto &>/dev/null; then
+    if ! pgrep -x mosquitto &>/dev/null; then
+        mosquitto -d -c "$SCRIPT_DIR/mosquitto.conf" 2>/dev/null \
+            || mosquitto -d -c /etc/mosquitto/mosquitto.conf 2>/dev/null \
+            || mosquitto -d 2>/dev/null \
+            && echo -e "${GREEN}✅ Mosquitto started${NC}" \
+            || echo -e "${YELLOW}⚠️  Mosquitto failed to start — try: sudo systemctl start mosquitto${NC}"
+    else
+        echo -e "${GREEN}✅ Mosquitto already running${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠️  Mosquitto not found — install with: sudo apt install mosquitto mosquitto-clients${NC}"
+fi
+
 # ── Kill any stale processes ───────────────────────────────────
 echo ""
 echo -e "${CYAN}Stopping any existing services...${NC}"
-pkill -f "pi_backend/iot_server.py"  2>/dev/null || true
-pkill -f "pi_backend/dashboard.py"   2>/dev/null || true
-pkill -f "defense_sensors.py"        2>/dev/null || true
-pkill -f "telegram_alert.py"         2>/dev/null || true
+pkill -f "pi_backend/iot_server.py"    2>/dev/null || true
+pkill -f "pi_backend/dashboard.py"     2>/dev/null || true
+pkill -f "defense_sensors.py"          2>/dev/null || true
+pkill -f "blockchain_bridge.py"        2>/dev/null || true
+pkill -f "nonce_challenger.py"         2>/dev/null || true
+pkill -f "telegram_alert.py"           2>/dev/null || true
 sleep 1
 
 # ── Honey-PIN initialisation ───────────────────────────────────
@@ -114,18 +133,18 @@ fi
 
 # ── Launch services ────────────────────────────────────────────
 echo ""
-echo -e "${CYAN}[1/4] Starting IoT Telemetry + AI Server (port 5005)...${NC}"
+echo -e "${CYAN}[1/6] Starting IoT Telemetry + AI Server (port 5005)...${NC}"
 nohup python3 "$SCRIPT_DIR/pi_backend/iot_server.py" \
     > "$LOG_DIR/iot_server.log" 2>&1 &
 IOT_PID=$!
 sleep 1
 
-echo -e "${CYAN}[2/4] Starting Physical Defense Sensors (SW-420 + DHT22)...${NC}"
+echo -e "${CYAN}[2/6] Starting Physical Defense Sensors (SW-420 + DHT22)...${NC}"
 nohup python3 "$SCRIPT_DIR/pi_backend/defense_sensors.py" \
     > "$LOG_DIR/defense_sensors.log" 2>&1 &
 SENSOR_PID=$!
 
-echo -e "${CYAN}[3/4] Starting Security Dashboard (port 5001)...${NC}"
+echo -e "${CYAN}[3/6] Starting Security Dashboard (port 5001)...${NC}"
 nohup python3 -c "
 import sys; sys.path.insert(0,'$SCRIPT_DIR')
 from pi_backend.dashboard import app
@@ -134,7 +153,19 @@ app.run(host='0.0.0.0', port=int(os.environ.get('DASHBOARD_PORT','5001')), debug
 " > "$LOG_DIR/dashboard.log" 2>&1 &
 DASH_PID=$!
 
-echo -e "${CYAN}[4/4] Starting Telegram Alert Service...${NC}"
+echo -e "${CYAN}[4/6] Starting Blockchain Bridge (port 5010)...${NC}"
+nohup python3 "$SCRIPT_DIR/pi_backend/blockchain_bridge.py" \
+    > "$LOG_DIR/blockchain_bridge.log" 2>&1 &
+BRIDGE_PID=$!
+sleep 1
+
+echo -e "${CYAN}[5/6] Starting Nonce Challenger (FPGA anti-replay service)...${NC}"
+nohup python3 "$SCRIPT_DIR/pi_backend/nonce_challenger.py" \
+    > "$LOG_DIR/nonce_challenger.log" 2>&1 &
+NONCE_PID=$!
+sleep 1
+
+echo -e "${CYAN}[6/6] Starting Telegram Alert Service...${NC}"
 if [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ]; then
     nohup python3 "$SCRIPT_DIR/pi_backend/telegram_alert.py" \
         > "$LOG_DIR/telegram.log" 2>&1 &
@@ -152,21 +183,24 @@ echo ""
 echo "============================================================"
 echo -e "  ${GREEN}${BOLD}All services running!${NC}"
 echo ""
-echo -e "  IoT + AI Engine  → ${BOLD}port 5005${NC}   (PID $IOT_PID)"
-echo -e "  Defense Sensors  → ${BOLD}background${NC} (PID $SENSOR_PID)"
-echo -e "  Dashboard        → ${BOLD}http://${HOST_IP}:$DASHBOARD_PORT${NC}  (PID $DASH_PID)"
-echo -e "  Telegram Alerts  → (PID $TG_PID)"
+echo -e "  [1] IoT + AI Engine  → ${BOLD}port 5005${NC}   (PID $IOT_PID)"
+echo -e "  [2] Defense Sensors  → ${BOLD}background${NC} (PID $SENSOR_PID)"
+echo -e "  [3] Dashboard        → ${BOLD}http://${HOST_IP}:$DASHBOARD_PORT${NC}  (PID $DASH_PID)"
+echo -e "  [4] Blockchain Bridge→ ${BOLD}port 5010${NC}   (PID $BRIDGE_PID)"
+echo -e "  [5] Nonce Challenger → ${BOLD}background${NC} (PID $NONCE_PID)"
+echo -e "  [6] Telegram Alerts  → (PID $TG_PID)"
 echo ""
 echo "  Logs → $LOG_DIR/"
 echo ""
-echo "  ATTACKS:"
-echo "    Press button on Rogue ESP32  → watch dashboard Threat Radar turn RED"
-echo "    Shake the Pironman case      → watch SW-420 wipe keys instantly"
+echo "  DEMO ATTACKS:"
+echo "    Tap FAKE card       → RED LED + 5 CAM photos + Telegram + Blockchain TX"
+echo "    Press Rogue ESP32   → Threat Radar turns RED on dashboard"
+echo "    Shake the Pi case   → SW-420 tamper wipes keys instantly"
 echo ""
-echo "  RUN FULL TEST SUITE:"
-echo "    python3 -m pytest tests/ -v"
+echo "  OPEN DASHBOARD:"
+echo -e "    ${BOLD}http://${HOST_IP}:$DASHBOARD_PORT${NC}"
 echo ""
 echo "  STOP ALL:"
-echo "    pkill -f iot_server.py; pkill -f dashboard.py; pkill -f defense_sensors.py"
+echo "    pkill -f iot_server.py; pkill -f dashboard.py; pkill -f defense_sensors.py; pkill -f blockchain_bridge.py; pkill -f nonce_challenger.py; pkill -f telegram_alert.py"
 echo "============================================================"
 echo ""

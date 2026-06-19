@@ -28,7 +28,7 @@ import paho.mqtt.client as mqtt
 _BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 DB_PATH    = os.environ.get("TRAINING_DB_PATH",
                              os.path.join(_BASE_DIR, "training_data.db"))
-MQTT_BROKER = os.environ.get("MQTT_BROKER", "192.168.1.113")
+MQTT_BROKER = os.environ.get("MQTT_BROKER", "10.176.62.161")
 MQTT_PORT   = int(os.environ.get("MQTT_PORT", "1883"))
 MQTT_TOPIC  = os.environ.get("MQTT_TOPIC",  "mailbox/heartbeat")
 

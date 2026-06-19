@@ -14,9 +14,9 @@
 #define BAUD_RATE             9600   // bps— Serial communication speed
 
 // ── 🎚️ OUTPUT TOGGLE ──────────────────────────────────────────────────────────
-// TRUE  = Professional CLI Dashboard for your demo
-// FALSE = Strict JSON for the Raspberry Pi 
-bool HUMAN_MODE = true; 
+// TRUE  = Professional CLI Dashboard for your demo/serial monitor viewing
+// FALSE = Strict JSON for the Raspberry Pi integration (REQUIRED for Pi to parse events)
+bool HUMAN_MODE = false;   // ← Keep FALSE when connected to Pi; set TRUE only for serial monitor demo
 // ──────────────────────────────────────────────────────────────────────────────
 
 // ── ⏱️ TIMING & STATE VARIABLES ───────────────────────────────────────────────
